@@ -197,10 +197,19 @@ final class PermissionManager {
 
     /// True when System Settings may show Cue as enabled but this binary is not authorized.
     var hasStaleScreenCaptureGrant: Bool {
+        guard isLikelyEligibleForScreenCaptureGrant else { return false }
         guard !hasScreenCapturePermission() else { return false }
         let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
         let current = executableFingerprint()
         return stored != nil && stored != current
+    }
+
+    var unsignedBuildHint: String {
+        """
+        This copy of Cue is not signed with an Apple Developer ID certificate. On macOS 15+, Screen Recording and Accessibility will not work — System Settings may show Cue as enabled, but the app cannot receive permission.
+
+        GitHub release DMGs must be built with code signing enabled. If you installed an older unsigned release, delete /Applications/Cue.app and install a signed build.
+        """
     }
 
     var staleScreenCaptureRecoveryHint: String {

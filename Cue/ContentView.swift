@@ -271,7 +271,12 @@ private struct PermissionsSettingsSection: View {
                 )
             }
 
-            if appState.needsRestartForPermissions {
+            if !permissionManager.isLikelyEligibleForScreenCaptureGrant {
+                PermissionHelpCallout(
+                    title: "Unsigned build — permissions cannot work",
+                    message: permissionManager.unsignedBuildHint
+                )
+            } else if appState.needsRestartForPermissions {
                 PermissionHelpCallout(
                     title: "Relaunch Cue to apply Screen Recording",
                     message: permissionManager.restartAfterPermissionChangeHint,
@@ -281,11 +286,6 @@ private struct PermissionsSettingsSection: View {
                 PermissionHelpCallout(
                     title: "Stale Screen Recording permission",
                     message: permissionManager.staleScreenCaptureRecoveryHint
-                )
-            } else if !permissionManager.isLikelyEligibleForScreenCaptureGrant {
-                PermissionHelpCallout(
-                    title: "Unsigned build",
-                    message: "Screen Recording does not work for unsigned apps on macOS 15+. Archive or run from Xcode with your Developer team set in Config/Local.xcconfig, or install a signed release build."
                 )
             } else if !appState.screenRecordingGranted || !appState.accessibilityGranted {
                 PermissionHelpCallout(

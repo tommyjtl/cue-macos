@@ -1,0 +1,49 @@
+# Release secrets (maintainer only)
+
+Copy to `docs/RELEASE.local.md` (gitignored) and configure these GitHub repository secrets before running the Release workflow.
+
+## Required for signed releases
+
+| Secret | Description |
+|--------|-------------|
+| `APPLE_CERTIFICATE_BASE64` | Base64-encoded `.p12` export of your **Developer ID Application** certificate (include private key) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
+| `APPLE_TEAM_ID` | Apple Developer team ID (e.g. `8B8983VEMG`) |
+| `APPLE_ID` | Apple ID email used for notarization |
+| `APPLE_NOTARIZATION_PASSWORD` | App-specific password for notarization ([appleid.apple.com](https://appleid.apple.com)) |
+
+## Optional
+
+| Secret | Description |
+|--------|-------------|
+| `RELEASE_NOTES_API_KEY` | OpenAI API key for AI-generated release notes |
+
+## Export certificate as base64
+
+```bash
+base64 -i ~/Downloads/Certificates.p12 | pbcopy
+# Paste into GitHub → Settings → Secrets → APPLE_CERTIFICATE_BASE64
+```
+
+## Why signing is required
+
+Unsigned macOS apps **cannot receive Screen Recording** on macOS 15+. System Settings may show Cue as enabled, but the app will never get permission. Release DMGs must be Developer ID signed (and notarized for smooth install).
+
+## Local signed release test
+
+```bash
+export RELEASE_SIGN=1
+export DEVELOPMENT_TEAM=YOUR_TEAM_ID
+./scripts/build-release.sh
+```
+
+With notarization:
+
+```bash
+export RELEASE_SIGN=1
+export NOTARIZE_RELEASE=1
+export DEVELOPMENT_TEAM=YOUR_TEAM_ID
+export APPLE_ID=you@example.com
+export APPLE_NOTARIZATION_PASSWORD=xxxx-xxxx-xxxx-xxxx
+./scripts/build-release.sh
+```

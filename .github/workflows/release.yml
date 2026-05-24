@@ -60,8 +60,23 @@ jobs:
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "Creating release $TAG (version $MARKETING_VERSION, build $BUILD_NUMBER)"
 
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: ./scripts/import-signing-certificate.sh
+
       - name: Build release DMG
-        run: ./scripts/build-release.sh
+        env:
+          RELEASE_SIGN: "1"
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+        run: |
+          if [[ -n "$APPLE_NOTARIZATION_PASSWORD" ]]; then
+            export NOTARIZE_RELEASE=1
+          fi
+          ./scripts/build-release.sh
 
       - name: Generate release notes
         env:
