@@ -36,7 +36,9 @@ final class AppModel {
         case inbox
         case recents
         case debug
-        case settings
+        case permissions
+        case shortcuts
+        case providers
 
         var id: Self { self }
 
@@ -48,8 +50,12 @@ final class AppModel {
                 "Recents"
             case .debug:
                 "Debug"
-            case .settings:
-                "Settings"
+            case .permissions:
+                "Permissions"
+            case .shortcuts:
+                "Shortcuts"
+            case .providers:
+                "Providers"
             }
         }
 
@@ -61,8 +67,12 @@ final class AppModel {
                 "clock.arrow.circlepath"
             case .debug:
                 "ladybug"
-            case .settings:
-                "slider.horizontal.3"
+            case .permissions:
+                "lock.shield"
+            case .shortcuts:
+                "keyboard"
+            case .providers:
+                "server.rack"
             }
         }
     }
@@ -215,6 +225,11 @@ final class AppModel {
             onDismissOverlayTrigger: { [weak self] in
                 Task { @MainActor in
                     self?.dismissVisibleContextOverlayIfNeeded()
+                }
+            },
+            onPrefetchSelectedText: { [weak self] in
+                Task { @MainActor in
+                    self?.contextSession?.prefetchSelectedTextCapture()
                 }
             }
         )
@@ -437,7 +452,7 @@ final class AppModel {
     }
 
     func showSettingsInMainWindow() {
-        selectedSection = .settings
+        selectedSection = .permissions
         showMainWindow()
     }
 
@@ -714,14 +729,39 @@ final class AppModel {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var commandQMonitor: Any?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.setActivationPolicy(.accessory)
         configureMainMenu()
+        installCommandQMonitor()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let commandQMonitor {
+            NSEvent.removeMonitor(commandQMonitor)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    private func installCommandQMonitor() {
+        commandQMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags.contains(.command),
+                  !flags.contains(.shift),
+                  !flags.contains(.option),
+                  !flags.contains(.control),
+                  event.charactersIgnoringModifiers?.lowercased() == "q" else {
+                return event
+            }
+
+            NSApp.terminate(nil)
+            return nil
+        }
     }
 
     private func configureMainMenu() {
@@ -731,11 +771,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
-        appMenu.addItem(
-            withTitle: "Quit Cue",
+        let quitItem = NSMenuItem(
+            title: "Quit Cue",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
+        quitItem.target = NSApp
+        appMenu.addItem(quitItem)
 
         NSApp.mainMenu = mainMenu
     }

@@ -224,10 +224,47 @@ final class PermissionManager {
         """
     }
 
+    var crossAppAccessibilityRecoveryHint: String {
+        """
+        Cue appears trusted, but macOS is blocking cross-app Accessibility (Safari, Chrome, Obsidian, etc.). Terminal may still work.
+
+        Quit Cue (⌘Q), then run:
+
+        tccutil reset Accessibility com.cruxbetalabs.Cue
+
+        Reopen Cue from Applications — not from Terminal or iTerm — and enable Cue.app in System Settings → Accessibility. Confirm Cue.app appears in that list.
+
+        Running from:
+        \(runningApplicationPath)
+        """
+    }
+
     // MARK: - Accessibility
 
     func hasAccessibilityPermission() -> Bool {
         AXIsProcessTrusted()
+    }
+
+    /// True when Accessibility is granted and Cue can query at least one other running app's AX tree.
+    func canReadOtherApplicationsAccessibilityTree() -> Bool {
+        guard hasAccessibilityPermission() else { return false }
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.activationPolicy == .regular,
+                  let bundleID = app.bundleIdentifier,
+                  bundleID != Bundle.main.bundleIdentifier else {
+                continue
+            }
+
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            var windowsRef: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+            if error == .success {
+                return true
+            }
+        }
+
+        return true
     }
 
     func ensureAccessibilityPermission(promptIfNeeded: Bool) -> Bool {

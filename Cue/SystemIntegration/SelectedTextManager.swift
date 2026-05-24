@@ -45,6 +45,7 @@ final class SelectedTextManager {
     }
 
     private let permissionManager = PermissionManager.shared
+    private let maxParentTraversalDepth = 10
 
     func captureSelectedText(
         promptForPermission: Bool = true,
@@ -68,74 +69,215 @@ final class SelectedTextManager {
         )
 
         let systemWideElement = AXUIElementCreateSystemWide()
-        guard let focusedElement = copyAXElementAttribute(
-            systemWideElement,
-            attribute: kAXFocusedUIElementAttribute as CFString,
+        let candidateElements = focusedElementCandidates(
+            frontmostApplication: frontmostApplication,
+            systemWideElement: systemWideElement,
             loggingMode: loggingMode
-        ) else {
-            log("Unable to resolve the focused accessibility element.", mode: loggingMode)
+        )
+
+        guard !candidateElements.isEmpty else {
+            log("Unable to resolve any focused accessibility elements.", mode: loggingMode)
             throw SelectionError.noFocusedElement
         }
 
-        let role = copyStringAttribute(
-            focusedElement,
-            attribute: kAXRoleAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
-        )
-        let subrole = copyStringAttribute(
-            focusedElement,
-            attribute: kAXSubroleAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
-        )
-        log(
-            "Focused element role=\(role ?? "unknown") subrole=\(subrole ?? "none")",
-            mode: loggingMode,
-            minimumMode: .verbose
-        )
+        for (index, element) in candidateElements.enumerated() {
+            let role = copyStringAttribute(
+                element,
+                attribute: kAXRoleAttribute as CFString,
+                loggingMode: loggingMode,
+                logExpectedFailure: false
+            )
+            let subrole = copyStringAttribute(
+                element,
+                attribute: kAXSubroleAttribute as CFString,
+                loggingMode: loggingMode,
+                logExpectedFailure: false
+            )
+            log(
+                "Candidate \(index + 1)/\(candidateElements.count) role=\(role ?? "unknown") subrole=\(subrole ?? "none")",
+                mode: loggingMode,
+                minimumMode: .verbose
+            )
 
-        if let selectedText = copyStringAttribute(
-            focusedElement,
-            attribute: kAXSelectedTextAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
-        ) {
-            let trimmedText = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedText.isEmpty {
-                log("Selected text detected (\(trimmedText.count) chars).", mode: loggingMode)
+            if let selectedText = selectedText(from: element, loggingMode: loggingMode) {
+                log("Selected text detected (\(selectedText.count) chars).", mode: loggingMode)
                 return SelectionSnapshot(
                     createdAt: Date(),
-                    text: trimmedText,
+                    text: selectedText,
                     appName: frontmostApplication?.localizedName,
                     bundleIdentifier: frontmostApplication?.bundleIdentifier,
                     role: role,
                     subrole: subrole
                 )
             }
-
-            log(
-                "Focused element exposes selected text, but it is empty after trimming.",
-                mode: loggingMode,
-                minimumMode: .verbose
-            )
-            throw SelectionError.noSelectedText
         }
 
-        if let selectedRange = copySelectedTextRange(focusedElement) {
-            if selectedRange.length > 0 {
-                log(
-                    "Focused element exposes a selected text range but not selected text directly. location=\(selectedRange.location) length=\(selectedRange.length)",
-                    mode: loggingMode
-                )
-            } else {
-                log("Focused element reports no selected text.", mode: loggingMode, minimumMode: .verbose)
-            }
+        let primaryElement = candidateElements[0]
+        let role = copyStringAttribute(
+            primaryElement,
+            attribute: kAXRoleAttribute as CFString,
+            loggingMode: loggingMode,
+            logExpectedFailure: false
+        )
+        let subrole = copyStringAttribute(
+            primaryElement,
+            attribute: kAXSubroleAttribute as CFString,
+            loggingMode: loggingMode,
+            logExpectedFailure: false
+        )
+
+        if let selectedRange = copySelectedTextRange(primaryElement), selectedRange.length > 0 {
+            log(
+                "Focused element exposes a selected text range but Cue could not resolve the text. location=\(selectedRange.location) length=\(selectedRange.length)",
+                mode: loggingMode
+            )
             throw SelectionError.unsupportedElement(role: role, subrole: subrole)
         }
 
-        log("Focused element does not expose selected text attributes.", mode: loggingMode, minimumMode: .verbose)
-        throw SelectionError.unsupportedElement(role: role, subrole: subrole)
+        log("No selected text found across \(candidateElements.count) accessibility candidates.", mode: loggingMode, minimumMode: .verbose)
+        throw SelectionError.noSelectedText
+    }
+
+    private func focusedElementCandidates(
+        frontmostApplication: NSRunningApplication?,
+        systemWideElement: AXUIElement,
+        loggingMode: LoggingMode
+    ) -> [AXUIElement] {
+        var roots: [AXUIElement] = []
+        var seen = Set<ObjectIdentifier>()
+
+        func appendRoot(_ element: AXUIElement?) {
+            guard let element else { return }
+            let key = ObjectIdentifier(element as AnyObject)
+            guard seen.insert(key).inserted else { return }
+            roots.append(element)
+        }
+
+        appendRoot(copyAXElementAttribute(
+            systemWideElement,
+            attribute: kAXFocusedUIElementAttribute as CFString,
+            loggingMode: loggingMode
+        ))
+
+        if let pid = frontmostApplication?.processIdentifier {
+            let appElement = AXUIElementCreateApplication(pid)
+            appendRoot(copyAXElementAttribute(
+                appElement,
+                attribute: kAXFocusedUIElementAttribute as CFString,
+                loggingMode: loggingMode
+            ))
+
+            if let focusedWindow = copyAXElementAttribute(
+                appElement,
+                attribute: kAXFocusedWindowAttribute as CFString,
+                loggingMode: loggingMode
+            ) {
+                appendRoot(copyAXElementAttribute(
+                    focusedWindow,
+                    attribute: kAXFocusedUIElementAttribute as CFString,
+                    loggingMode: loggingMode
+                ))
+            }
+        }
+
+        var candidates: [AXUIElement] = []
+        var candidateSeen = Set<ObjectIdentifier>()
+
+        func appendCandidate(_ element: AXUIElement) {
+            let key = ObjectIdentifier(element as AnyObject)
+            guard candidateSeen.insert(key).inserted else { return }
+            candidates.append(element)
+        }
+
+        for root in roots {
+            var current: AXUIElement? = root
+            var depth = 0
+            while let element = current, depth < maxParentTraversalDepth {
+                appendCandidate(element)
+                current = copyAXElementAttribute(
+                    element,
+                    attribute: kAXParentAttribute as CFString,
+                    loggingMode: loggingMode
+                )
+                depth += 1
+            }
+        }
+
+        return candidates
+    }
+
+    private func selectedText(from element: AXUIElement, loggingMode: LoggingMode) -> String? {
+        if let direct = copyStringAttribute(
+            element,
+            attribute: kAXSelectedTextAttribute as CFString,
+            loggingMode: loggingMode,
+            logExpectedFailure: false
+        ) {
+            let trimmedText = direct.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedText.isEmpty {
+                return trimmedText
+            }
+        }
+
+        guard let selectedRange = copySelectedTextRange(element), selectedRange.length > 0 else {
+            return nil
+        }
+
+        if let rangedText = copyStringForRange(element, range: selectedRange, loggingMode: loggingMode) {
+            let trimmedText = rangedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedText.isEmpty {
+                return trimmedText
+            }
+        }
+
+        if let valueText = copyStringAttribute(
+            element,
+            attribute: kAXValueAttribute as CFString,
+            loggingMode: loggingMode,
+            logExpectedFailure: false
+        ), selectedRange.length > 0 {
+            let nsValue = valueText as NSString
+            let safeLocation = min(max(selectedRange.location, 0), nsValue.length)
+            let safeLength = min(max(selectedRange.length, 0), nsValue.length - safeLocation)
+            if safeLength > 0 {
+                let substring = nsValue.substring(with: NSRange(location: safeLocation, length: safeLength))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !substring.isEmpty {
+                    return substring
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func copyStringForRange(
+        _ element: AXUIElement,
+        range: CFRange,
+        loggingMode: LoggingMode
+    ) -> String? {
+        var cfRange = range
+        guard let axValue = AXValueCreate(.cfRange, &cfRange) else {
+            return nil
+        }
+
+        var result: CFTypeRef?
+        let error = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            axValue,
+            &result
+        )
+        guard error == .success else {
+            log(
+                "AX string-for-range unavailable, error=\(error.rawValue)",
+                mode: loggingMode,
+                minimumMode: .verbose
+            )
+            return nil
+        }
+
+        return result as? String
     }
 
     private func copyAXElementAttribute(
@@ -146,7 +288,7 @@ final class SelectedTextManager {
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, attribute, &value)
         guard error == .success else {
-            log("AX copy attribute failed for \(attribute) with error=\(error.rawValue)", mode: loggingMode)
+            log("AX copy attribute failed for \(attribute) with error=\(error.rawValue)", mode: loggingMode, minimumMode: .verbose)
             return nil
         }
 
@@ -155,11 +297,11 @@ final class SelectedTextManager {
         }
 
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            log("AX attribute \(attribute) returned a non-AXUIElement value.", mode: loggingMode)
+            log("AX attribute \(attribute) returned a non-AXUIElement value.", mode: loggingMode, minimumMode: .verbose)
             return nil
         }
 
-        return unsafeBitCast(value, to: AXUIElement.self)
+        return (value as! AXUIElement)
     }
 
     private func copyStringAttribute(

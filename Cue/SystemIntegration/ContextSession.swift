@@ -13,6 +13,9 @@ final class ContextSession {
     private let selectedTextManager = SelectedTextManager()
     private var captureCoordinator: CaptureCoordinator?
     private var snapshot = Snapshot()
+    private var prefetchedSelection: SelectedTextManager.SelectionSnapshot?
+    private var prefetchedSelectionAt: Date?
+    private let prefetchMaxAge: TimeInterval = 2.5
 
     init(onSnapshotChange: @escaping @MainActor (Snapshot) -> Void) {
         self.onSnapshotChange = onSnapshotChange
@@ -56,9 +59,47 @@ final class ContextSession {
         snapshot.browserPageContexts.contains { $0.url == url }
     }
 
+    /// Snapshot selection on the first modifier keydown, before double-tap shortcuts can steal browser focus.
+    func prefetchSelectedTextCapture() {
+        if let snapshot = try? selectedTextManager.captureSelectedText(promptForPermission: false, loggingMode: .silent) {
+            prefetchedSelection = snapshot
+            prefetchedSelectionAt = Date()
+        }
+    }
+
+    private func consumePrefetchedSelectionIfFresh() -> SelectedTextManager.SelectionSnapshot? {
+        guard let snapshot = prefetchedSelection,
+              let capturedAt = prefetchedSelectionAt,
+              Date().timeIntervalSince(capturedAt) <= prefetchMaxAge else {
+            clearPrefetchedSelection()
+            return nil
+        }
+
+        clearPrefetchedSelection()
+        return snapshot
+    }
+
+    private func clearPrefetchedSelection() {
+        prefetchedSelection = nil
+        prefetchedSelectionAt = nil
+    }
+
     /// Returns true if the frontmost app currently has text selected, without modifying any state.
     func hasCurrentlySelectedText() -> Bool {
-        (try? selectedTextManager.captureSelectedText(promptForPermission: false, loggingMode: .silent)) != nil
+        if (try? selectedTextManager.captureSelectedText(promptForPermission: false, loggingMode: .silent)) != nil {
+            return true
+        }
+
+        return prefetchedSelectionIsFresh
+    }
+
+    private var prefetchedSelectionIsFresh: Bool {
+        guard prefetchedSelection != nil,
+              let capturedAt = prefetchedSelectionAt else {
+            return false
+        }
+
+        return Date().timeIntervalSince(capturedAt) <= prefetchMaxAge
     }
 
     func beginScreenshotCapture(
@@ -112,7 +153,17 @@ final class ContextSession {
         onSelectionReady: @escaping @MainActor () -> Void
     ) {
         do {
-            let selectionSnapshot = try selectedTextManager.captureSelectedText(promptForPermission: true, loggingMode: .concise)
+            let selectionSnapshot: SelectedTextManager.SelectionSnapshot
+            do {
+                selectionSnapshot = try selectedTextManager.captureSelectedText(promptForPermission: true, loggingMode: .concise)
+            } catch {
+                if let prefetched = consumePrefetchedSelectionIfFresh() {
+                    selectionSnapshot = prefetched
+                } else {
+                    throw error
+                }
+            }
+
             if let latestSelection = snapshot.selectedTextContexts.first,
                latestSelection.isEquivalent(to: selectionSnapshot) {
                 setStatus("Selected text is already attached to the context.")

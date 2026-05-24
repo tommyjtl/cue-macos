@@ -11,16 +11,12 @@ import Textual
 
 struct ContentView: View {
     @Environment(AppModel.self) private var appState
-    @State private var showingSettings = false
 
     var body: some View {
         @Bindable var appState = appState
 
         HStack(spacing: 0) {
-            AppSidebar(
-                selectedSection: $appState.selectedSection,
-                showingSettings: $showingSettings
-            )
+            AppSidebar(selectedSection: $appState.selectedSection)
 
             Divider()
 
@@ -32,10 +28,6 @@ struct ContentView: View {
             set: { if !$0 { appState.completeOnboarding() } }
         )) {
             OnboardingView()
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsSheetView()
-                .environment(appState)
         }
         .task {
             appState.startBackgroundServicesIfNeeded()
@@ -54,9 +46,69 @@ private struct WorkspaceDetailView: View {
             ConversationHistoryView()
         case .debug:
             DebugWorkspaceView()
-        case .settings:
-            CurrentSessionView()
+        case .permissions:
+            PermissionsSettingsView()
+        case .shortcuts:
+            ShortcutsSettingsView()
+        case .providers:
+            ProvidersSettingsView()
         }
+    }
+}
+
+private struct PermissionsSettingsView: View {
+    @Environment(AppModel.self) private var appState
+
+    var body: some View {
+        SettingsDetailScaffold(title: "Permissions", subtitle: "Screen Recording and Accessibility are required for capture and global shortcuts.") {
+            PermissionsSettingsSection()
+        }
+        .task {
+            await appState.refreshPermissions()
+        }
+    }
+}
+
+private struct ShortcutsSettingsView: View {
+    var body: some View {
+        SettingsDetailScaffold(title: "Shortcuts", subtitle: "Customize how you add context and open the chat composer.") {
+            ShortcutSettingsSection()
+        }
+    }
+}
+
+private struct ProvidersSettingsView: View {
+    var body: some View {
+        SettingsDetailScaffold(title: "Providers", subtitle: "Configure the model provider and API keys used by Cue.") {
+            ConversationSettingsSection()
+        }
+    }
+}
+
+private struct SettingsDetailScaffold<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                content
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -287,6 +339,11 @@ private struct PermissionsSettingsSection: View {
                     title: "Stale Screen Recording permission",
                     message: permissionManager.staleScreenCaptureRecoveryHint
                 )
+            } else if appState.accessibilityGranted && !permissionManager.canReadOtherApplicationsAccessibilityTree() {
+                PermissionHelpCallout(
+                    title: "Accessibility cannot read other apps",
+                    message: permissionManager.crossAppAccessibilityRecoveryHint
+                )
             } else if !appState.screenRecordingGranted || !appState.accessibilityGranted {
                 PermissionHelpCallout(
                     title: "Enable in System Settings",
@@ -487,10 +544,9 @@ private struct MainWindowConversationBubble: View {
 
 private struct AppSidebar: View {
     @Binding var selectedSection: AppModel.SidebarSection?
-    @Binding var showingSettings: Bool
 
     private let primarySections: [AppModel.SidebarSection] = [.inbox, .recents]
-    private let utilitySections: [AppModel.SidebarSection] = [.debug]
+    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .shortcuts, .providers]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -510,9 +566,24 @@ private struct AppSidebar: View {
             .padding(.top, 18)
             .padding(.bottom, 14)
 
-            // Primary navigation
             VStack(spacing: 1) {
                 ForEach(primarySections) { section in
+                    SidebarNavItem(section: section, selectedSection: $selectedSection)
+                }
+
+                Divider()
+                    .padding(.vertical, 8)
+
+                Text("App Settings")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+
+                ForEach(settingsSections) { section in
                     SidebarNavItem(section: section, selectedSection: $selectedSection)
                 }
             }
@@ -520,32 +591,11 @@ private struct AppSidebar: View {
 
             Spacer()
 
-            // Bottom utility
             VStack(spacing: 1) {
                 Divider()
                     .padding(.bottom, 6)
 
-                ForEach(utilitySections) { section in
-                    SidebarNavItem(section: section, selectedSection: $selectedSection)
-                }
-
-                Button {
-                    showingSettings = true
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 13, weight: .medium))
-                            .frame(width: 18)
-                            .foregroundStyle(.secondary)
-                        Text("Settings")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                }
-                .buttonStyle(.plain)
+                SidebarNavItem(section: .debug, selectedSection: $selectedSection)
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 12)
@@ -572,127 +622,6 @@ private struct SidebarNavItem: View {
                     .frame(width: 18)
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                 Text(section.title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                isSelected
-                    ? Color.accentColor.opacity(0.12)
-                    : (isHovered ? Color(nsColor: .quaternaryLabelColor).opacity(0.3) : .clear),
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-}
-
-// MARK: - Settings Sheet
-
-private struct SettingsSheetView: View {
-    @Environment(AppModel.self) private var appState
-    @State private var selectedCategory: SettingsCategory = .permissions
-
-    private enum SettingsCategory: String, CaseIterable, Identifiable {
-        case permissions, shortcuts, conversation
-
-        var id: Self { self }
-
-        var title: String {
-            switch self {
-            case .permissions: "Permissions"
-            case .shortcuts: "Shortcuts"
-            case .conversation: "Conversation"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .permissions: "lock.shield"
-            case .shortcuts: "keyboard"
-            case .conversation: "bubble.left.and.bubble.right"
-            }
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // Left category list
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Settings")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 18)
-                    .padding(.bottom, 8)
-
-                VStack(spacing: 1) {
-                    ForEach(SettingsCategory.allCases) { category in
-                        SettingsCategoryItem(
-                            title: category.title,
-                            icon: category.icon,
-                            isSelected: selectedCategory == category
-                        ) {
-                            selectedCategory = category
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-
-                Spacer()
-            }
-            .frame(width: 196)
-            .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-
-            // Right content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(selectedCategory.title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    switch selectedCategory {
-                    case .permissions:
-                        PermissionsSettingsSection()
-                    case .shortcuts:
-                        ShortcutSettingsSection()
-                    case .conversation:
-                        ConversationSettingsSection()
-                    }
-                }
-                .padding(28)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .frame(width: 680, height: 480)
-        .task {
-            await appState.refreshPermissions()
-        }
-    }
-}
-
-private struct SettingsCategoryItem: View {
-    let title: String
-    let icon: String
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18)
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                Text(title)
                     .font(.system(size: 13, weight: isSelected ? .medium : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                 Spacer()

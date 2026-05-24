@@ -171,6 +171,7 @@ final class HotkeyManager {
     private var onTrigger: (() -> Void)?
     private var onConversationTrigger: (() -> Void)?
     private var onDismissOverlayTrigger: (() -> Void)?
+    private var onPrefetchSelectedText: (() -> Void)?
     private var shortcut = CaptureShortcut.defaultValue
     private var lastModifierFlags: NSEvent.ModifierFlags = []
     private var isMonitoring = false
@@ -183,12 +184,14 @@ final class HotkeyManager {
         shortcut: CaptureShortcut,
         onTrigger: @escaping () -> Void,
         onConversationTrigger: @escaping () -> Void,
-        onDismissOverlayTrigger: @escaping () -> Void
+        onDismissOverlayTrigger: @escaping () -> Void,
+        onPrefetchSelectedText: (() -> Void)? = nil
     ) {
         self.shortcut = shortcut.normalized
         self.onTrigger = onTrigger
         self.onConversationTrigger = onConversationTrigger
         self.onDismissOverlayTrigger = onDismissOverlayTrigger
+        self.onPrefetchSelectedText = onPrefetchSelectedText
 
         guard !isMonitoring else { return }
         isMonitoring = true
@@ -319,6 +322,7 @@ final class HotkeyManager {
 
         if currentFlags == targetModifier, !lastModifierFlags.contains(targetModifier) {
             bareCaptureModifierKeyDownAt = now
+            onPrefetchSelectedText?()
             return
         }
 
@@ -346,6 +350,7 @@ final class HotkeyManager {
 
         if currentFlags == [.shift], !lastModifierFlags.contains(.shift) {
             bareShiftKeyDownAt = now
+            onPrefetchSelectedText?()
             return
         }
 
