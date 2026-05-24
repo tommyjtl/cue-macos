@@ -17,12 +17,18 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # Cue requires Xcode 26+ (Swift 6 / project settings). macos-15 ships Xcode 16.x.
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcode-select -p
 
       - name: Validate release tag
         id: version
