@@ -4,10 +4,27 @@
 //
 
 import CoreGraphics
+import Foundation
 import Testing
 @testable import Cue
 
 struct SystemIntegrationTests {
+    @Test func soundEffectsDefaultToEnabledWhenPreferenceMissing() {
+        let defaults = UserDefaults.standard
+        let key = AppPreferenceKeys.soundEffectsEnabledKey
+        let previousValue = defaults.object(forKey: key)
+        defaults.removeObject(forKey: key)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        #expect(AppPreferenceKeys.soundEffectsEnabled)
+    }
+
     @Test func launchContextDetectsXcodeDebugBuild() {
         let path = "/Users/dev/Library/Developer/Xcode/DerivedData/Cue/Build/Products/Debug/Cue.app"
         #expect(PermissionManager.LaunchContext.current(for: path) == .xcodeDebug)

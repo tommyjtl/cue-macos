@@ -124,6 +124,7 @@ final class ContextStackWindowController: NSWindowController {
         panel.makeKeyAndOrderFront(nil)
         requestComposerFocus()
         startFollowingCursor()
+        SoundEffectPlayer.play(.chatOpened)
     }
 
     private func presentStackPanelWithoutActivatingApp(revertingTo previousApp: NSRunningApplication?) {

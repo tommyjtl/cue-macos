@@ -37,6 +37,12 @@ struct ContextStackView: View {
         static let outerSize: CGFloat = stageSize + (shadowBleed * 2)
     }
 
+    private enum ComposerLayout {
+        static let controlFont = Font.system(size: 13)
+        static let controlFontSize: CGFloat = 13
+        static let cornerRadius: CGFloat = 14
+    }
+
     @Bindable var model: ContextPanelViewModel
     let onClear: () -> Void
     let onCloseChat: () -> Void
@@ -131,7 +137,7 @@ struct ContextStackView: View {
                         .font(.headline)
 
                     Text(chatSubtitle)
-                        .font(.caption)
+                        .font(ComposerLayout.controlFont)
                         .foregroundStyle(.secondary)
                 }
 
@@ -163,6 +169,7 @@ struct ContextStackView: View {
             ComposerTextField(
                 text: $model.draftMessage,
                 placeholder: composerPlaceholder,
+                fontSize: ComposerLayout.controlFontSize,
                 focusRequestID: model.composerFocusRequestID,
                 onSubmit: {
                     guard !model.isSending,
@@ -175,35 +182,43 @@ struct ContextStackView: View {
                 onEscape: onEscape
             )
             .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .frame(height: 40)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 8)
+            .frame(height: 38)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+            }
 
             HStack(alignment: .center) {
                 Button("Clear") {
                     onClear()
                 }
                 .buttonStyle(.borderless)
+                .font(ComposerLayout.controlFont)
 
                 if model.messages.isEmpty && model.hasSavedConversations {
                     Button("Load recent chat") {
                         onLoadMostRecent()
                     }
                     .buttonStyle(.borderless)
-                }
-
-                if model.supportsWebSearch {
-                    Toggle("Web Search", isOn: webSearchBinding)
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-                        .help(model.isWebSearchEnabled ? "Disable web search for this provider" : "Enable web search for this provider")
-
-                    Text("Web Search")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .font(ComposerLayout.controlFont)
                 }
 
                 Spacer(minLength: 12)
+
+                if model.supportsWebSearch {
+                    HStack(spacing: 6) {
+                        Toggle("Web Search", isOn: webSearchBinding)
+                            .toggleStyle(.checkbox)
+                            .labelsHidden()
+                            .help(model.isWebSearchEnabled ? "Disable web search for this provider" : "Enable web search for this provider")
+
+                        Text("Web Search")
+                            .font(ComposerLayout.controlFont)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Button {
                     if model.isSending {
@@ -226,14 +241,7 @@ struct ContextStackView: View {
 
     private var transcriptContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if model.messages.isEmpty {
-                Text(emptyConversationText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            } else {
+            if !model.messages.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -300,10 +308,6 @@ struct ContextStackView: View {
         }
 
         return "\(attachmentSummary) • \(model.providerDisplayName)"
-    }
-
-    private var emptyConversationText: String {
-        "Ask a question about the attached context. Replies will come from \(assistantDisplayName)."
     }
 
     private var composerPlaceholder: String {
@@ -877,6 +881,7 @@ private struct ContextStackPreviewCard: View {
 private struct ComposerTextField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    let fontSize: CGFloat
     let focusRequestID: UUID
     let onSubmit: () -> Void
     let onEscape: () -> Void
@@ -891,7 +896,7 @@ private struct ComposerTextField: NSViewRepresentable {
         textField.isBezeled = false
         textField.drawsBackground = false
         textField.focusRingType = .none
-        textField.font = .systemFont(ofSize: NSFont.systemFontSize)
+        textField.font = NSFont.systemFont(ofSize: fontSize)
         textField.placeholderString = placeholder
         textField.isEditable = true
         textField.isSelectable = true
@@ -906,6 +911,11 @@ private struct ComposerTextField: NSViewRepresentable {
     func updateNSView(_ textField: NSTextField, context: Context) {
         context.coordinator.onSubmit = onSubmit
         context.coordinator.onEscape = onEscape
+
+        let font = NSFont.systemFont(ofSize: fontSize)
+        if textField.font != font {
+            textField.font = font
+        }
 
         if textField.placeholderString != placeholder {
             textField.placeholderString = placeholder
