@@ -258,15 +258,38 @@ private struct ConversationTranscriptPanel: View {
 
 private struct PermissionsSettingsSection: View {
     @Environment(AppModel.self) private var appState
-    private let permissionManager = PermissionManager()
+    private let permissionManager = PermissionManager.shared
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(PermissionItem.all) { item in
                 PermissionStatusRow(
                     item: item,
                     isGranted: isGranted(item),
+                    statusMessage: statusMessage(for: item),
                     onGrant: { grant(item) }
+                )
+            }
+
+            if appState.needsRestartForPermissions {
+                PermissionHelpCallout(
+                    title: "Restart Cue to apply permissions",
+                    message: permissionManager.restartAfterPermissionChangeHint
+                )
+            } else if permissionManager.hasStaleScreenCaptureGrant {
+                PermissionHelpCallout(
+                    title: "Stale Screen Recording permission",
+                    message: permissionManager.staleScreenCaptureRecoveryHint
+                )
+            } else if !permissionManager.isLikelyEligibleForScreenCaptureGrant {
+                PermissionHelpCallout(
+                    title: "Unsigned build",
+                    message: "Screen Recording does not work for unsigned apps on macOS 15+. Archive or run from Xcode with your Developer team set in Config/Local.xcconfig, or install a signed release build."
+                )
+            } else if !appState.screenRecordingGranted || !appState.accessibilityGranted {
+                PermissionHelpCallout(
+                    title: "Enable in System Settings",
+                    message: "Click Enable… for each permission, turn on Cue.app in System Settings, then quit Cue (⌘Q) and reopen it. macOS does not apply Accessibility to a running app until restart.\n\nRunning from:\n\(permissionManager.runningApplicationPath)"
                 )
             }
         }
@@ -279,22 +302,60 @@ private struct PermissionsSettingsSection: View {
         }
     }
 
+    private func statusMessage(for item: PermissionItem) -> String {
+        if isGranted(item) {
+            return "Granted"
+        }
+
+        switch item.id {
+        case .screenRecording:
+            return "Enable Screen Recording for Cue.app, then restart Cue"
+        case .accessibility:
+            return "Enable Accessibility for Cue.app, then restart Cue"
+        }
+    }
+
     private func grant(_ item: PermissionItem) {
         switch item.id {
         case .screenRecording:
-            // Use the full registration flow: CGRequestScreenCaptureAccess() registers
-            // the app in the Screen & System Audio Recording list AND opens System
-            // Settings so the user can toggle it on in one step.
-            Task { await permissionManager.requestScreenCaptureViaScreenCaptureKit() }
+            Task {
+                await permissionManager.requestScreenCapturePermission()
+                await appState.refreshPermissions()
+            }
         case .accessibility:
-            permissionManager.openAccessibilitySettings()
+            permissionManager.requestAccessibilityPermission()
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                await appState.refreshPermissions()
+            }
         }
+    }
+}
+
+private struct PermissionHelpCallout: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
 private struct PermissionStatusRow: View {
     let item: PermissionItem
     let isGranted: Bool
+    let statusMessage: String
     let onGrant: () -> Void
 
     var body: some View {
@@ -309,7 +370,7 @@ private struct PermissionStatusRow: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
 
-                Text(isGranted ? "Granted" : "Not granted — required for full functionality")
+                Text(statusMessage)
                     .font(.caption)
                     .foregroundStyle(isGranted ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
             }
@@ -320,7 +381,7 @@ private struct PermissionStatusRow: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else {
-                Button("Open Settings", action: onGrant)
+                Button("Enable…", action: onGrant)
                     .controlSize(.small)
             }
         }
@@ -603,6 +664,9 @@ private struct SettingsSheetView: View {
             }
         }
         .frame(width: 680, height: 480)
+        .task {
+            await appState.refreshPermissions()
+        }
     }
 }
 

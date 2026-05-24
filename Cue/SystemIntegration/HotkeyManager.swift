@@ -163,7 +163,7 @@ final class HotkeyManager {
         static let maxIntervalBetweenTaps: CFTimeInterval = 0.35
     }
 
-    private let permissionManager = PermissionManager()
+    private let permissionManager = PermissionManager.shared
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var globalKeyDownMonitor: Any?

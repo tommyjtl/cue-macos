@@ -81,3 +81,6 @@ docs/RELEASE.local.md
 
 # design
 *.psd
+
+# agents
+.agents/

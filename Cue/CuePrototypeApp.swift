@@ -88,6 +88,7 @@ final class AppModel {
     // so the UI always reflects reality regardless of view rebuilds.
     var screenRecordingGranted: Bool = false
     var accessibilityGranted: Bool = false
+    var needsRestartForPermissions: Bool = false
 
     var selectedSection: SidebarSection? = .inbox
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
@@ -222,37 +223,63 @@ final class AppModel {
     // MARK: - Permission Monitoring
 
     private func startPermissionMonitoring() {
-        let permManager = PermissionManager()
-        updatePermissionState(permManager)
+        let permManager = PermissionManager.shared
 
-        // Notification-driven: com.apple.accessibility.api fires system-wide the moment
-        // the user enables or disables Accessibility for any app in System Settings.
-        // We wait 500 ms before re-checking so AXIsProcessTrusted() has settled.
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            await permManager.registerScreenCaptureIfNeeded()
+            refreshPermissionState(from: permManager)
+        }
+
         permissionMonitorTask = Task { [weak self] in
             let stream = Self.axPermissionNotificationStream()
             for await _ in stream {
                 try? await Task.sleep(for: .milliseconds(500))
-                self?.updatePermissionState(permManager)
+                self?.refreshPermissionState(from: permManager)
             }
         }
 
-        // Polling fallback — catches Screen Recording changes and any delayed AX updates.
         permissionPollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                self?.updatePermissionState(permManager)
+                self?.refreshPermissionState(from: permManager)
+                let delay: Duration = (self?.hasAllPermissionsGranted == true) ? .seconds(2) : .milliseconds(500)
+                try? await Task.sleep(for: delay)
+            }
+        }
+
+        Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                try? await Task.sleep(for: .milliseconds(400))
+                print("[AppModel] didBecomeActive — \(permManager.permissionDiagnosticsSummary())")
+                _ = await permManager.verifyScreenCaptureAccess(force: true)
+                self?.refreshPermissionState(from: permManager)
             }
         }
     }
 
-    private func updatePermissionState(_ permManager: PermissionManager) {
+    private var hasAllPermissionsGranted: Bool {
+        screenRecordingGranted && accessibilityGranted
+    }
+
+    func refreshPermissions() async {
+        let permManager = PermissionManager.shared
+        _ = await permManager.verifyScreenCaptureAccess(force: true)
+        refreshPermissionState(from: permManager)
+    }
+
+    private func refreshPermissionState(from permManager: PermissionManager) {
         let newSR = permManager.hasScreenCapturePermission()
         let newAX = permManager.hasAccessibilityPermission()
-        if newSR != screenRecordingGranted || newAX != accessibilityGranted {
-            print("[AppModel] Permission status changed — screenRecording:\(screenRecordingGranted)→\(newSR)  accessibility:\(accessibilityGranted)→\(newAX)")
+        let newRestart = permManager.needsRestartAfterPermissionChange
+
+        if newSR != screenRecordingGranted || newAX != accessibilityGranted || newRestart != needsRestartForPermissions {
+            print("[AppModel] Permission status changed — screenRecording:\(screenRecordingGranted)→\(newSR)  accessibility:\(accessibilityGranted)→\(newAX)  needsRestart:\(needsRestartForPermissions)→\(newRestart)")
+            print("[AppModel] \(permManager.permissionDiagnosticsSummary())")
         }
+
         screenRecordingGranted = newSR
         accessibilityGranted = newAX
+        needsRestartForPermissions = newRestart
     }
 
     private static func axPermissionNotificationStream() -> AsyncStream<Void> {
@@ -688,18 +715,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.setActivationPolicy(.accessory)
-
-        // Call SCK at launch so the OS adds Cue to System Settings >
-        // Screen & System Audio Recording as soon as the app first runs.
-        // This runs after full app initialization, which is the right time
-        // for TCC registration on macOS 14+.
-        Task {
-            await PermissionManager().probeScreenCaptureKitSilently()
-        }
+        configureMainMenu()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+        appMenu.addItem(
+            withTitle: "Quit Cue",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+
+        NSApp.mainMenu = mainMenu
     }
 }
 
@@ -775,6 +811,13 @@ struct CuePrototypeApp: App {
                     appState.showSettingsInMainWindow()
                 }
                 .keyboardShortcut(",", modifiers: [.command])
+            }
+
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Cue") {
+                    NSApp.terminate(nil)
+                }
+                .keyboardShortcut("q", modifiers: [.command])
             }
         }
     }

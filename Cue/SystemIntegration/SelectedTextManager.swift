@@ -44,7 +44,7 @@ final class SelectedTextManager {
         }
     }
 
-    private let permissionManager = PermissionManager()
+    private let permissionManager = PermissionManager.shared
 
     func captureSelectedText(
         promptForPermission: Bool = true,

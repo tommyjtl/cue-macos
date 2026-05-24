@@ -4,59 +4,149 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+/// Central permission state for Cue. Use `PermissionManager.shared` everywhere so
+/// TCC checks are coalesced and we never spam ScreenCaptureKit on a timer.
 @MainActor
 final class PermissionManager {
+    static let shared = PermissionManager()
+
     private enum UserDefaultsKey {
         static let hasPromptedForAccessibilityPermission = "has-prompted-for-accessibility-permission"
+        static let lastVerifiedScreenCaptureFingerprint = "last-verified-screen-capture-fingerprint"
     }
+
+    private enum SCKErrorCode {
+        static let userDeclined = -3801
+    }
+
+    private(set) var screenCaptureGranted = false
+    private var sckVerificationTask: Task<Bool, Never>?
+    private var lastSCKVerificationAt: Date?
+    private var hasRegisteredForScreenCapture = false
+    private(set) var lastPermissionSettingsOpenedAt: Date?
+
+    private init() {}
 
     // MARK: - Screen Recording
 
+    /// Cheap read for UI. Does not call ScreenCaptureKit.
     func hasScreenCapturePermission() -> Bool {
-        CGPreflightScreenCaptureAccess()
+        screenCaptureGranted || CGPreflightScreenCaptureAccess()
     }
 
-    /// Silently probes SCK on launch so the app registers itself in the
-    /// System Settings > Screen Recording list without opening any UI.
-    func probeScreenCaptureKitSilently() async {
-        let preflightBefore = CGPreflightScreenCaptureAccess()
-        print("[PermissionManager] probeScreenCaptureKitSilently: CGPreflightScreenCaptureAccess=\(preflightBefore)  bundle=\(Bundle.main.bundleIdentifier ?? "?")")
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            print("[PermissionManager] probeScreenCaptureKitSilently: SCK call succeeded, \(content.displays.count) display(s) — screen recording is granted")
-        } catch {
-            let nsError = error as NSError
-            print("[PermissionManager] probeScreenCaptureKitSilently: SCK call threw — domain=\(nsError.domain) code=\(nsError.code) (\(error.localizedDescription)) — this is expected before permission is granted; the app should now appear in System Settings > Screen Recording")
+    /// Authoritative ScreenCaptureKit check. Coalesced — concurrent callers share one request.
+    @discardableResult
+    func verifyScreenCaptureAccess(force: Bool = false) async -> Bool {
+        if !force,
+           let lastSCKVerificationAt,
+           Date().timeIntervalSince(lastSCKVerificationAt) < 3 {
+            return screenCaptureGranted
         }
-    }
 
-    /// Called when the user explicitly asks to grant Screen Recording permission.
-    /// CGRequestScreenCaptureAccess() on macOS 14+ both registers the app in
-    /// System Settings > Screen & System Audio Recording AND opens System Settings
-    /// so the user can toggle it on — even if the app wasn't in the list before.
-    /// The SCK call is a secondary belt-and-suspenders registration attempt.
-    func requestScreenCaptureViaScreenCaptureKit() async {
-        let cgResult = CGRequestScreenCaptureAccess()
-        print("[PermissionManager] requestScreenCaptureViaScreenCaptureKit: CGRequestScreenCaptureAccess()=\(cgResult)")
-        // Belt-and-suspenders: also trigger the SCK TCC path.
-        _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        // CGRequestScreenCaptureAccess already opens System Settings on macOS 14+.
-        // Fall back to URL navigation only if it somehow didn't.
-        if !hasScreenCapturePermission() && !cgResult {
-            openScreenCaptureSettings()
-        }
-    }
-
-    func ensureScreenCapturePermission() -> Bool {
         if CGPreflightScreenCaptureAccess() {
+            markScreenCaptureGranted()
             return true
         }
 
-        return CGRequestScreenCaptureAccess()
+        if let sckVerificationTask {
+            return await sckVerificationTask.value
+        }
+
+        let task = Task { @MainActor in
+            defer { self.sckVerificationTask = nil }
+
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                self.markScreenCaptureGranted()
+                print("[PermissionManager] verifyScreenCaptureAccess: granted (bundle=\(Bundle.main.bundleIdentifier ?? "?") path=\(self.runningApplicationPath))")
+                return true
+            } catch {
+                let nsError = error as NSError
+                print("[PermissionManager] verifyScreenCaptureAccess: denied — domain=\(nsError.domain) code=\(nsError.code) (\(error.localizedDescription)) path=\(self.runningApplicationPath)")
+
+                if nsError.domain == SCStreamErrorDomain, nsError.code == SCKErrorCode.userDeclined {
+                    self.screenCaptureGranted = false
+                }
+
+                return self.screenCaptureGranted
+            }
+        }
+
+        sckVerificationTask = task
+        return await task.value
+    }
+
+    /// Registers this binary in System Settings > Screen Recording. Call once at launch.
+    func registerScreenCaptureIfNeeded() async {
+        guard !hasRegisteredForScreenCapture else { return }
+        hasRegisteredForScreenCapture = true
+
+        print("[PermissionManager] registerScreenCaptureIfNeeded: CGPreflight=\(CGPreflightScreenCaptureAccess()) fingerprint=\(executableFingerprint())")
+        _ = await verifyScreenCaptureAccess(force: true)
+    }
+
+    /// User-initiated grant flow. May show the system permission sheet once.
+    func requestScreenCapturePermission() async {
+        markPermissionSettingsOpened()
+
+        if await verifyScreenCaptureAccess(force: true) {
+            return
+        }
+
+        _ = CGRequestScreenCaptureAccess()
+        try? await Task.sleep(for: .milliseconds(400))
+        _ = await verifyScreenCaptureAccess(force: true)
+
+        if !hasScreenCapturePermission() {
+            openSystemPrivacySettings(pane: "Privacy_ScreenCapture")
+        }
     }
 
     func openScreenCaptureSettings() {
+        markPermissionSettingsOpened()
         openSystemPrivacySettings(pane: "Privacy_ScreenCapture")
+    }
+
+    func markPermissionSettingsOpened() {
+        lastPermissionSettingsOpenedAt = Date()
+    }
+
+    /// macOS applies Accessibility and often Screen Recording only after the app process restarts.
+    var needsRestartAfterPermissionChange: Bool {
+        guard let lastPermissionSettingsOpenedAt else { return false }
+        guard Date().timeIntervalSince(lastPermissionSettingsOpenedAt) < 600 else { return false }
+        return !hasScreenCapturePermission() || !hasAccessibilityPermission()
+    }
+
+    var restartAfterPermissionChangeHint: String {
+        """
+        macOS applies privacy permissions when the app next launches — toggling in System Settings does not update a running copy.
+
+        Press ⌘Q to quit Cue completely, then reopen it (⌘R in Xcode or open from Applications).
+
+        Running from:
+        \(runningApplicationPath)
+        """
+    }
+
+    /// True when System Settings may show Cue as enabled but this binary is not authorized.
+    var hasStaleScreenCaptureGrant: Bool {
+        guard !hasScreenCapturePermission() else { return false }
+        let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
+        let current = executableFingerprint()
+        return stored != nil && stored != current
+    }
+
+    var staleScreenCaptureRecoveryHint: String {
+        """
+        macOS tied Screen Recording to a different build of Cue. Toggle Cue.app off and on in System Settings, or reset with:
+
+        tccutil reset ScreenCapture com.cruxbetalabs.Cue
+
+        Then quit Cue (⌘Q), reopen, and enable again for this copy:
+
+        \(runningApplicationPath)
+        """
     }
 
     // MARK: - Accessibility
@@ -83,15 +173,123 @@ final class PermissionManager {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    func requestAccessibilityPermission() {
+        markPermissionSettingsOpened()
+
+        if hasAccessibilityPermission() {
+            return
+        }
+
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        if !AXIsProcessTrustedWithOptions(options) {
+            openAccessibilitySettings()
+        }
+    }
+
     func openAccessibilitySettings() {
+        markPermissionSettingsOpened()
         openSystemPrivacySettings(pane: "Privacy_Accessibility")
     }
 
-    // MARK: - Helpers
+    // MARK: - Diagnostics
+
+    var runningApplicationPath: String {
+        Bundle.main.bundlePath
+    }
+
+    var isLikelyEligibleForScreenCaptureGrant: Bool {
+        if case .signed = codeSigningStatus() {
+            return true
+        }
+        return false
+    }
+
+    enum CodeSigningStatus: Equatable {
+        case signed(teamID: String)
+        case unsigned
+    }
+
+    func codeSigningStatus() -> CodeSigningStatus {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dv", "--verbose=2", runningApplicationPath]
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return .unsigned
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if output.contains("Signature=adhoc") {
+            return .unsigned
+        }
+
+        for line in output.split(separator: "\n") {
+            guard line.contains("TeamIdentifier=") else { continue }
+            let teamID = line.split(separator: "=", maxSplits: 1).last?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !teamID.isEmpty {
+                return .signed(teamID: teamID)
+            }
+        }
+
+        return .unsigned
+    }
+
+    func executableFingerprint() -> String {
+        let dylibPath = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/Cue.debug.dylib")
+            .path
+        if FileManager.default.fileExists(atPath: dylibPath) {
+            return "dylib:\(codesignLine(from: dylibPath, prefix: "CDHash=") ?? dylibPath)"
+        }
+        return codesignLine(from: runningApplicationPath, prefix: "CDHash=") ?? runningApplicationPath
+    }
+
+    func permissionDiagnosticsSummary() -> String {
+        let ax = hasAccessibilityPermission()
+        let sr = hasScreenCapturePermission()
+        let preflight = CGPreflightScreenCaptureAccess()
+        return "AX=\(ax) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
+    }
+
+    // MARK: - Private
+
+    private func markScreenCaptureGranted() {
+        screenCaptureGranted = true
+        lastSCKVerificationAt = Date()
+        UserDefaults.standard.set(executableFingerprint(), forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
+    }
+
+    private func codesignLine(from path: String, prefix: String) -> String? {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dvvv", path]
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        for line in output.split(separator: "\n") {
+            guard line.contains(prefix) else { continue }
+            return line.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
 
     private func openSystemPrivacySettings(pane: String) {
-        // macOS 13+ moved to System Settings; use the new extension-based URL.
-        // The old com.apple.preference.security path is no longer reliable on macOS 26.
         let urlString: String
         if #available(macOS 13, *) {
             urlString = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)"

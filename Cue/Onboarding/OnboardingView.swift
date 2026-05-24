@@ -37,10 +37,8 @@ extension PermissionItem {
 
 struct OnboardingView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var screenRecordingGranted = false
-    @State private var accessibilityGranted = false
 
-    private let permissionManager = PermissionManager()
+    private let permissionManager = PermissionManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,16 +64,18 @@ struct OnboardingView: View {
             footer
         }
         .frame(width: 480)
-        .onAppear { refreshStatus() }
+        .task {
+            await appModel.refreshPermissions()
+        }
         .task {
             for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
-                refreshStatus()
+                await appModel.refreshPermissions()
             }
         }
         .task {
             while !Task.isCancelled {
+                await appModel.refreshPermissions()
                 try? await Task.sleep(for: .seconds(2))
-                refreshStatus()
             }
         }
     }
@@ -121,32 +121,25 @@ struct OnboardingView: View {
 
     private func isGranted(_ item: PermissionItem) -> Bool {
         switch item.id {
-        case .screenRecording: screenRecordingGranted
-        case .accessibility: accessibilityGranted
+        case .screenRecording: appModel.screenRecordingGranted
+        case .accessibility: appModel.accessibilityGranted
         }
     }
 
     private func grant(_ item: PermissionItem) {
         switch item.id {
         case .screenRecording:
-            // Use an SCK API call \u2014 this is what registers the app in the
-            // System Settings Screen Recording list on macOS 14+.
             Task {
-                await permissionManager.requestScreenCaptureViaScreenCaptureKit()
-                screenRecordingGranted = permissionManager.hasScreenCapturePermission()
+                await permissionManager.requestScreenCapturePermission()
+                await appModel.refreshPermissions()
             }
         case .accessibility:
-            let granted = permissionManager.ensureAccessibilityPermission(promptIfNeeded: true)
-            accessibilityGranted = granted
-            if !granted {
-                permissionManager.openAccessibilitySettings()
+            permissionManager.requestAccessibilityPermission()
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                await appModel.refreshPermissions()
             }
         }
-    }
-
-    private func refreshStatus() {
-        screenRecordingGranted = permissionManager.hasScreenCapturePermission()
-        accessibilityGranted = permissionManager.hasAccessibilityPermission()
     }
 }
 

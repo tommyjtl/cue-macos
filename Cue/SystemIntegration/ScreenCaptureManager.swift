@@ -39,7 +39,7 @@ enum CaptureError: LocalizedError {
         case .noDisplaysAvailable:
             return "No active displays are available for capture."
         case .permissionDenied:
-            return "Screen Recording permission is required to capture screenshots you explicitly select."
+            return "Screen Recording permission is required to capture screenshots you explicitly select. If Cue is already enabled in System Settings, quit and reopen the app — unsigned copies can appear as separate entries from an Xcode build."
         case .selectionCancelled:
             return "Screenshot capture was cancelled."
         }
@@ -52,7 +52,7 @@ struct ScreenCaptureSelection {
 }
 
 final class ScreenCaptureManager {
-    private let permissionManager = PermissionManager()
+    private let permissionManager = PermissionManager.shared
 
     @MainActor
     func capture(selection: ScreenCaptureSelection) async throws -> CapturedScreenshot {
@@ -70,8 +70,11 @@ final class ScreenCaptureManager {
         } catch let error as CaptureError {
             throw error
         } catch {
-            // SCK throws when screen recording permission is denied.
-            throw CaptureError.permissionDenied
+            let hasPermission = await permissionManager.verifyScreenCaptureAccess(force: true)
+            if !hasPermission {
+                throw CaptureError.permissionDenied
+            }
+            throw CaptureError.captureFailed
         }
     }
 

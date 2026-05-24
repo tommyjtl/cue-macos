@@ -35,6 +35,17 @@ The app is a menu-bar utility (no Dock icon). Use the text-cursor icon in the me
 
 Cue needs **Screen Recording** and **Accessibility** to capture screenshots and read selected text from other apps. Grant both when prompted during onboarding or in **System Settings → Privacy & Security**.
 
+**After enabling either permission, quit Cue completely (⌘Q) and reopen it.** macOS does not apply Accessibility (and sometimes Screen Recording) to an already-running process — the in-app status will stay "Not granted" until restart even if System Settings shows the toggle on.
+
+When developing in Xcode, use **Product → Clean Build Folder** sparingly. If permissions get out of sync after many rebuilds, reset them:
+
+```bash
+tccutil reset ScreenCapture com.cruxbetalabs.Cue
+tccutil reset Accessibility com.cruxbetalabs.Cue
+```
+
+Release DMGs built without code signing cannot receive Screen Recording on macOS 15+; use a signed Xcode build or archive for testing capture.
+
 ## Build from source
 
 ```bash

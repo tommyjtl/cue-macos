@@ -6,3 +6,8 @@
 
 CODE_SIGN_STYLE = Automatic
 MACOSX_DEPLOYMENT_TARGET = 15.6
+
+// Xcode 16+ loads Swift code from Cue.debug.dylib by default. That dylib is
+// re-signed on every build, so macOS TCC treats each run as a new app.
+// Disable it so Screen Recording / Accessibility grants survive incremental builds.
+ENABLE_DEBUG_DYLIB = NO
