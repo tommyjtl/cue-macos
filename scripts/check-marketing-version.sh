@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail when the current branch MARKETING_VERSION is lower than the base branch.
+# Fail when the current branch MARKETING_VERSION is not higher than the base branch.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,10 +35,16 @@ fi
 echo "Current branch MARKETING_VERSION: $CURRENT_VERSION"
 echo "Base branch MARKETING_VERSION:    $BASE_VERSION"
 
-LOWER="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$BASE_VERSION" | sort -V | head -1)"
-if [[ "$LOWER" == "$CURRENT_VERSION" && "$CURRENT_VERSION" != "$BASE_VERSION" ]]; then
-  echo "error: MARKETING_VERSION ($CURRENT_VERSION) is lower than $BASE_REF ($BASE_VERSION)." >&2
-  echo "Merge $BASE_REF into this branch and bump Config/Version.xcconfig before merging." >&2
+if [[ "$CURRENT_VERSION" == "$BASE_VERSION" ]]; then
+  echo "error: MARKETING_VERSION ($CURRENT_VERSION) must be higher than $BASE_REF ($BASE_VERSION)." >&2
+  echo "Bump Config/Version.xcconfig on this branch before merging to main." >&2
+  exit 1
+fi
+
+HIGHER="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$BASE_VERSION" | sort -V | tail -1)"
+if [[ "$HIGHER" != "$CURRENT_VERSION" ]]; then
+  echo "error: MARKETING_VERSION ($CURRENT_VERSION) must be higher than $BASE_REF ($BASE_VERSION)." >&2
+  echo "Bump Config/Version.xcconfig on this branch before merging to main." >&2
   exit 1
 fi
 
