@@ -19,13 +19,14 @@ Releases are **manual** — they do not run on every push to `main`.
 2. Open **[Actions → Release](https://github.com/tommyjtl/cue-macos/actions/workflows/release.yml)**
 3. Click **Run workflow**
 4. Enter the release tag (e.g. `v1.0`) — must match `MARKETING_VERSION` in `Config/Version.xcconfig`
-5. Run on branch **`main`**
+5. Optionally turn off **Generate AI release notes** to publish a simple commit list (no API key needed)
+6. Run on branch **`main`**
 
 The workflow will:
 
 1. Validate the tag (format, not already published, matches `Version.xcconfig`)
 2. Build an **unsigned** `.dmg`
-3. Generate release notes (user-facing + developer-facing sections)
+3. Generate release notes (AI by default, or a basic commit list if disabled)
 4. Create a GitHub Release and upload the DMG
 
 GitHub provides `GITHUB_TOKEN` automatically for creating releases.

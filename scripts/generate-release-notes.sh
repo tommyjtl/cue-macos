@@ -7,6 +7,13 @@ source "$ROOT/scripts/read-version.sh"
 
 OUTPUT="${1:-$ROOT/dist/release-notes.md}"
 PREV_TAG="${2:-}"
+BASIC=false
+
+if [[ "${1:-}" == "--basic" ]]; then
+  BASIC=true
+  OUTPUT="${2:-$ROOT/dist/release-notes.md}"
+  PREV_TAG="${3:-}"
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 
@@ -23,7 +30,22 @@ else
 fi
 
 if [[ -z "$COMMIT_LOG" ]]; then
-  COMMIT_LOG="- No conventional commits found in range"
+  COMMIT_LOG="- No commits found in range"
+fi
+
+if [[ "$BASIC" == true ]]; then
+  {
+    printf '# Cue %s (build %s)\n\n## Changes\n\n' "$MARKETING_VERSION" "$BUILD_NUMBER"
+    printf '%s\n' "$COMMIT_LOG"
+    cat <<'EOF'
+
+---
+
+This build is **unsigned**. After installing, you may need to right-click the app and choose **Open**, or allow it in **System Settings → Privacy & Security**.
+EOF
+  } >"$OUTPUT"
+  echo "Wrote basic release notes to $OUTPUT"
+  exit 0
 fi
 
 if [[ -z "${RELEASE_NOTES_API_KEY:-}" ]]; then
@@ -38,7 +60,10 @@ Version: ${MARKETING_VERSION} (build ${BUILD_NUMBER})
 Commit range: ${RANGE}
 
 Commits:
-${COMMIT_LOG}
+EOF
+)"
+PROMPT+=$(printf '%s' "$COMMIT_LOG")
+PROMPT+=$(cat <<'EOF'
 
 Write release notes in Markdown with exactly these two sections:
 
@@ -53,7 +78,7 @@ Rules:
 - If the commit list is sparse, say so briefly and keep bullets minimal.
 - Do not wrap the whole response in a code fence.
 EOF
-)"
+)
 
 REQUEST="$(python3 -c '
 import json, sys

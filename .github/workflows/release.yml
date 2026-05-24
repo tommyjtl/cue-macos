@@ -7,6 +7,11 @@ on:
         description: "Release tag (e.g. v1.0). Must match MARKETING_VERSION in Config/Version.xcconfig."
         required: true
         type: string
+      generate_release_notes:
+        description: "Generate AI release notes (requires RELEASE_NOTES_API_KEY secret). If off, publishes a commit list only."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -63,7 +68,11 @@ jobs:
           RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY }}
         run: |
           PREV_TAG="$(git tag --list 'v*' --sort=-version:refname | head -1 || true)"
-          ./scripts/generate-release-notes.sh dist/release-notes.md "$PREV_TAG"
+          if [[ "${{ github.event.inputs.generate_release_notes }}" == "true" ]]; then
+            ./scripts/generate-release-notes.sh dist/release-notes.md "$PREV_TAG"
+          else
+            ./scripts/generate-release-notes.sh --basic dist/release-notes.md "$PREV_TAG"
+          fi
 
       - name: Create GitHub Release
         env:
