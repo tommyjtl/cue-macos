@@ -80,10 +80,25 @@ final class ScreenCaptureManager {
 
     private func captureImage(for selection: ScreenCaptureSelection) async throws -> CGImage {
         let shareableContent = try await permissionManager.fetchShareableContent(onScreenWindowsOnly: true)
-        let selectedDisplay = try matchDisplay(for: selection, in: shareableContent.displays)
-        let sourceRect = selectionRectInDisplayLocalSpace(selection.rect, display: selectedDisplay)
-            .intersection(CGRect(origin: .zero, size: selectedDisplay.frame.size))
-            .integral
+        let displayInfos = shareableContent.displays.map {
+            ScreenCaptureGeometry.DisplayInfo(displayID: $0.displayID, frame: $0.frame)
+        }
+
+        guard let matchedInfo = ScreenCaptureGeometry.matchDisplay(
+            selectionRect: selection.rect,
+            preferredDisplayID: selection.displayID,
+            displays: displayInfos
+        ), let selectedDisplay = shareableContent.displays.first(where: { $0.displayID == matchedInfo.displayID }) else {
+            throw CaptureError.captureFailed
+        }
+
+        let rectInDisplaySpace = selectionRectInDisplaySpace(selection.rect, displayID: selectedDisplay.displayID)
+        let sourceRect = ScreenCaptureGeometry.selectionRectInDisplayLocalSpace(
+            rectInDisplaySpace: rectInDisplaySpace,
+            displayFrame: selectedDisplay.frame
+        )
+        .intersection(CGRect(origin: .zero, size: selectedDisplay.frame.size))
+        .integral
 
         guard sourceRect.width > 2, sourceRect.height > 2 else {
             throw CaptureError.invalidSelection
@@ -99,56 +114,17 @@ final class ScreenCaptureManager {
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
-    private func matchDisplay(for selection: ScreenCaptureSelection, in displays: [SCDisplay]) throws -> SCDisplay {
-        if let displayID = selection.displayID,
-           let matchingDisplay = displays.first(where: { $0.displayID == displayID }) {
-            return matchingDisplay
-        }
-
-        let rect = selection.rect
-        let probePoint = CGPoint(x: rect.midX, y: rect.midY)
-
-        if let matchingDisplay = displays.first(where: { $0.frame.contains(probePoint) }) {
-            return matchingDisplay
-        }
-
-        if let fallbackDisplay = displays.first(where: { $0.frame.intersects(rect) }) {
-            return fallbackDisplay
-        }
-
-        throw CaptureError.captureFailed
-    }
-
-    private func selectionRectInDisplayLocalSpace(_ rect: CGRect, display: SCDisplay) -> CGRect {
-        let rectInDisplaySpace = selectionRectInDisplaySpace(rect, displayID: display.displayID)
-        let localRect = rectInDisplaySpace.offsetBy(
-            dx: -display.frame.minX,
-            dy: -display.frame.minY
-        )
-
-        return CGRect(
-            x: localRect.minX,
-            y: display.frame.height - localRect.maxY,
-            width: localRect.width,
-            height: localRect.height
-        )
-    }
-
     private func selectionRectInDisplaySpace(_ rect: CGRect, displayID: CGDirectDisplayID) -> CGRect {
         guard let screen = NSScreen.screens.first(where: {
-            guard let screenNumber = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-                return false
-            }
-
-            return CGDirectDisplayID(screenNumber.uint32Value) == displayID
+            ScreenLocator.displayID(for: $0) == displayID
         }) else {
             return rect
         }
 
-        let cgDisplayBounds = CGDisplayBounds(displayID)
-        return rect.offsetBy(
-            dx: cgDisplayBounds.minX - screen.frame.minX,
-            dy: cgDisplayBounds.minY - screen.frame.minY
+        return ScreenCaptureGeometry.selectionRectInDisplaySpace(
+            selectionRect: rect,
+            screenFrame: screen.frame,
+            cgDisplayBounds: CGDisplayBounds(displayID)
         )
     }
 

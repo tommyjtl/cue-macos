@@ -34,10 +34,33 @@ enum CodeSigningDiagnostics {
         let dylibURL = bundleURL.appendingPathComponent("Contents/MacOS/Cue.debug.dylib")
         if FileManager.default.fileExists(atPath: dylibURL.path),
            let dylibFingerprint = uniqueIdentifier(for: dylibURL) {
-            return "dylib:\(dylibFingerprint)"
+            return normalizedFingerprint("dylib:\(dylibFingerprint)")
         }
 
-        return uniqueIdentifier(for: bundleURL) ?? bundlePath
+        return normalizedFingerprint(uniqueIdentifier(for: bundleURL) ?? bundlePath)
+    }
+
+    /// Canonical form for comparing fingerprints stored before/after the Security-framework migration.
+    /// Legacy values used full `codesign` lines (e.g. `CDHash=a1b2…`); current values use raw CDHash hex.
+    static func normalizedFingerprint(_ fingerprint: String) -> String {
+        if fingerprint.hasPrefix("dylib:") {
+            let hash = normalizeHashComponent(String(fingerprint.dropFirst("dylib:".count)))
+            return "dylib:\(hash)"
+        }
+
+        return normalizeHashComponent(fingerprint)
+    }
+
+    static func fingerprintsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        normalizedFingerprint(lhs) == normalizedFingerprint(rhs)
+    }
+
+    private static func normalizeHashComponent(_ component: String) -> String {
+        if component.hasPrefix("CDHash=") {
+            return String(component.dropFirst("CDHash=".count))
+        }
+
+        return component
     }
 
     private static func uniqueIdentifier(for url: URL) -> String? {

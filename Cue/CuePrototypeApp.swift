@@ -90,8 +90,7 @@ final class AppModel {
     @ObservationIgnored private let conversationStore: ConversationStore?
     @ObservationIgnored private var conversationCoordinator: ConversationCoordinator?
     @ObservationIgnored private var browserWebServer: BrowserWebServer?
-    @ObservationIgnored private var permissionMonitorTask: Task<Void, Never>?
-    @ObservationIgnored private var permissionPollTask: Task<Void, Never>?
+    @ObservationIgnored private var permissionMonitor: PermissionMonitor?
     private var hasStartedBackgroundServices = false
 
     // Observable permission state — updated from AppModel's stable monitoring tasks,
@@ -224,7 +223,7 @@ final class AppModel {
             },
             onDismissOverlayTrigger: { [weak self] in
                 Task { @MainActor in
-                    self?.dismissVisibleContextOverlayIfNeeded()
+                    self?.handleOverlayEscapeRollback()
                 }
             },
             onPrefetchSelectedText: { [weak self] in
@@ -238,42 +237,11 @@ final class AppModel {
     // MARK: - Permission Monitoring
 
     private func startPermissionMonitoring() {
-        let permManager = PermissionManager.shared
-
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            await permManager.registerScreenCaptureIfNeeded()
-            refreshPermissionState(from: permManager)
+        let monitor = PermissionMonitor()
+        permissionMonitor = monitor
+        monitor.start { [weak self] permManager in
+            self?.refreshPermissionState(from: permManager)
         }
-
-        permissionMonitorTask = Task { [weak self] in
-            let stream = Self.axPermissionNotificationStream()
-            for await _ in stream {
-                try? await Task.sleep(for: .milliseconds(500))
-                self?.refreshPermissionState(from: permManager)
-            }
-        }
-
-        permissionPollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.refreshPermissionState(from: permManager)
-                let delay: Duration = (self?.hasAllPermissionsGranted == true) ? .seconds(2) : .milliseconds(500)
-                try? await Task.sleep(for: delay)
-            }
-        }
-
-        Task { [weak self] in
-            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
-                try? await Task.sleep(for: .milliseconds(400))
-                print("[AppModel] didBecomeActive — \(permManager.permissionDiagnosticsSummary())")
-                _ = await permManager.verifyScreenCaptureAccess(force: true)
-                self?.refreshPermissionState(from: permManager)
-            }
-        }
-    }
-
-    private var hasAllPermissionsGranted: Bool {
-        screenRecordingGranted && accessibilityGranted
     }
 
     func refreshPermissions() async {
@@ -297,25 +265,6 @@ final class AppModel {
         needsRestartForPermissions = newRestart
 
         hotkeyManager?.refreshAccessibilityDependentMonitors()
-    }
-
-    private static func axPermissionNotificationStream() -> AsyncStream<Void> {
-        AsyncStream { continuation in
-            let center = DistributedNotificationCenter.default()
-            print("[AppModel] Registered DistributedNotificationCenter observer for com.apple.accessibility.api")
-            let observer = center.addObserver(
-                forName: NSNotification.Name("com.apple.accessibility.api"),
-                object: nil,
-                queue: .main
-            ) { _ in
-                print("[AppModel] Received com.apple.accessibility.api — scheduling refresh in 500 ms")
-                continuation.yield()
-            }
-            continuation.onTermination = { _ in
-                print("[AppModel] Removing DistributedNotificationCenter observer")
-                center.removeObserver(observer)
-            }
-        }
     }
 
     // MARK: - Capture
@@ -436,11 +385,15 @@ final class AppModel {
     }
 
     func dismissVisibleContextOverlayIfNeeded() {
+        handleOverlayEscapeRollback()
+    }
+
+    func handleOverlayEscapeRollback() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
-        clearContextStack()
+        overlayCoordinator?.handleEscapeRollback()
     }
 
     func showMainWindow() {

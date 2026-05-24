@@ -45,7 +45,7 @@ final class ContextStackWindowController: NSWindowController {
         self.onRemoveContextItem = onRemoveContextItem
         let viewModel = ContextPanelViewModel()
         self.viewModel = viewModel
-        let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in })
+        let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in }, onEscape: {})
         hostingView = NSHostingView(rootView: initialView)
 
         panel = ContextStackPanel(
@@ -66,8 +66,13 @@ final class ContextStackWindowController: NSWindowController {
         panel.contentView = hostingView
 
         super.init(window: panel)
+        panel.onEscapeKey = { [weak self] in
+            self?.handleEscapeRollback() ?? false
+        }
+        setPanelInteractionMode(for: .stack)
         installApplicationLifecycleObserver()
         refreshRootView()
+        installEscapeMonitorsIfNeeded()
     }
 
     deinit {
@@ -84,6 +89,8 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     func show(screenshots: [CapturedScreenshot], selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
+        let previousApp = NSWorkspace.shared.frontmostApplication
+
         guard !screenshots.isEmpty || !selectedTextContexts.isEmpty || !browserPageContexts.isEmpty else {
             hide()
             return
@@ -91,9 +98,10 @@ final class ContextStackWindowController: NSWindowController {
 
         updateContext(screenshots: screenshots, selectedTextContexts: selectedTextContexts, browserPageContexts: browserPageContexts)
         viewModel.mode = .stack
+        setPanelInteractionMode(for: .stack)
         cursorEnteredPanelAt = nil
         panel.setFrameOrigin(clampedOrigin(for: panel.frame.size, near: point))
-        panel.makeKeyAndOrderFront(nil)
+        presentStackPanelWithoutActivatingApp(revertingTo: previousApp)
         startFollowingCursor()
     }
 
@@ -106,14 +114,30 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.selectedTextContexts = selectedTextContexts
         viewModel.browserPageContexts = browserPageContexts
         viewModel.mode = .chat
+        setPanelInteractionMode(for: .chat)
         refreshPanelSize()
         cursorEnteredPanelAt = nil
 
         panel.setFrameOrigin(clampedOrigin(for: panel.frame.size, near: point))
 
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         requestComposerFocus()
         startFollowingCursor()
+    }
+
+    private func presentStackPanelWithoutActivatingApp(revertingTo previousApp: NSRunningApplication?) {
+        panel.orderFront(nil)
+        restoreFrontmostApplicationIfNeeded(previousApp)
+    }
+
+    private func restoreFrontmostApplicationIfNeeded(_ app: NSRunningApplication?) {
+        guard let app else { return }
+        guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+
+        DispatchQueue.main.async {
+            app.activate(options: [])
+        }
     }
 
     func updateContext(screenshots: [CapturedScreenshot], selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPageContexts: [BrowserPageContext]) {
@@ -148,6 +172,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.screenshots = []
         viewModel.selectedTextContexts = []
         viewModel.browserPageContexts = []
+        setPanelInteractionMode(for: .stack)
         panel.orderOut(nil)
     }
 
@@ -155,8 +180,6 @@ final class ContextStackWindowController: NSWindowController {
         guard displayLink == nil else {
             return
         }
-
-        installEscapeMonitorsIfNeeded()
 
         let newDisplayLink = panel.displayLink(target: self, selector: #selector(handleDisplayLinkTick(_:)))
         newDisplayLink.add(to: .main, forMode: .common)
@@ -169,7 +192,6 @@ final class ContextStackWindowController: NSWindowController {
             displayLink.invalidate()
             self.displayLink = nil
         }
-        removeEscapeMonitors()
     }
 
     private func installApplicationLifecycleObserver() {
@@ -265,24 +287,21 @@ final class ContextStackWindowController: NSWindowController {
 
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            guard self.panel.isVisible, event.keyCode == 53 else { return event }
-            guard !self.isCaptureInProgress() else { return event }
+            guard self.panel.isVisible else { return event }
 
-            if self.viewModel.mode == .chat {
-                self.exitChatMode()
-                return nil
+            if let handled = self.handleChatComposerKeyEquivalent(event) {
+                return handled
             }
 
-            self.onClear()
-            return nil
+            guard self.isEscapeKey(event) else { return event }
+
+            return self.handleEscapeRollback() ? nil : event
         }
 
         globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return }
-            guard self.panel.isVisible, event.keyCode == 53 else { return }
-            guard !self.isCaptureInProgress() else { return }
-
-            self.onClear()
+            guard self.panel.isVisible, self.isEscapeKey(event) else { return }
+            self.handleEscapeRollback()
         }
 
         localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
@@ -368,8 +387,32 @@ final class ContextStackWindowController: NSWindowController {
             },
             onRemoveContextItem: { [weak self] item in
                 self?.onRemoveContextItem(item)
+            },
+            onEscape: { [weak self] in
+                _ = self?.handleEscapeRollback()
             }
         )
+    }
+
+    /// Rolls back one overlay level: chat → context stack → dismissed.
+    @discardableResult
+    func handleEscapeRollback() -> Bool {
+        guard panel.isVisible else { return false }
+        guard !isCaptureInProgress() else { return false }
+
+        switch viewModel.mode {
+        case .chat:
+            exitChatMode()
+        case .stack:
+            onClear()
+        }
+
+        return true
+    }
+
+    private func isEscapeKey(_ event: NSEvent) -> Bool {
+        event.keyCode == 53
+            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
     }
 
     private func refreshPanelSize() {
@@ -394,10 +437,28 @@ final class ContextStackWindowController: NSWindowController {
             ? NSPoint(x: frame.origin.x, y: frame.maxY - size.height)
             : frame.origin
 
-        panel.setFrame(
-            NSRect(origin: origin, size: size),
-            display: true
-        )
+        let nextFrame = NSRect(origin: origin, size: size)
+        let sizeChanged = abs(panel.frame.width - size.width) > 1 || abs(panel.frame.height - size.height) > 1
+        guard sizeChanged || panel.frame.origin != origin else {
+            return
+        }
+
+        panel.setFrame(nextFrame, display: true)
+    }
+
+    private func setPanelInteractionMode(for mode: ContextPanelViewModel.Mode) {
+        switch mode {
+        case .chat:
+            panel.styleMask.remove(.nonactivatingPanel)
+            panel.becomesKeyOnlyIfNeeded = false
+            panel.requiresInteractiveKeyboardInput = true
+        case .stack:
+            if !panel.styleMask.contains(.nonactivatingPanel) {
+                panel.styleMask.insert(.nonactivatingPanel)
+            }
+            panel.becomesKeyOnlyIfNeeded = true
+            panel.requiresInteractiveKeyboardInput = false
+        }
     }
 
     private func exitChatMode() {
@@ -405,12 +466,15 @@ final class ContextStackWindowController: NSWindowController {
             return
         }
 
+        resignComposerInputFocus()
+
         if viewModel.isSending {
             onCancelSend()
         }
 
         viewModel.mode = .stack
         viewModel.draftMessage = ""
+        setPanelInteractionMode(for: .stack)
         refreshPanelSize()
     }
 
@@ -434,6 +498,68 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
+    private func handleChatComposerKeyEquivalent(_ event: NSEvent) -> NSEvent? {
+        guard viewModel.mode == .chat, panel.isKeyWindow else {
+            return event
+        }
+
+        guard event.modifierFlags.contains(.command),
+              event.charactersIgnoringModifiers?.lowercased() == "a" else {
+            return event
+        }
+
+        if let textView = panel.firstResponder as? NSTextView {
+            textView.selectAll(nil)
+            return nil
+        }
+
+        if let textField = panel.firstResponder as? NSTextField {
+            textField.selectText(nil)
+            return nil
+        }
+
+        return event
+    }
+
+    private func resignComposerInputFocus() {
+        if let textField = composerTextField() ?? findComposerTextField(in: hostingView),
+           textField.currentEditor() != nil {
+            textField.abortEditing()
+        }
+
+        panel.makeFirstResponder(nil)
+    }
+
+    private func findComposerTextField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+
+        if let textField = view as? NSTextField, textField.isEditable {
+            return textField
+        }
+
+        for subview in view.subviews {
+            if let textField = findComposerTextField(in: subview) {
+                return textField
+            }
+        }
+
+        return nil
+    }
+
+    private func composerTextField() -> NSTextField? {
+        if let textField = panel.firstResponder as? NSTextField {
+            return textField
+        }
+
+        if let textView = panel.firstResponder as? NSTextView,
+           textView.isFieldEditor,
+           let textField = textView.delegate as? NSTextField {
+            return textField
+        }
+
+        return nil
+    }
+
     private func requestComposerFocus() {
         DispatchQueue.main.async { [weak self] in
             self?.viewModel.composerFocusRequestID = UUID()
@@ -442,6 +568,38 @@ final class ContextStackWindowController: NSWindowController {
 }
 
 private final class ContextStackPanel: NSPanel {
+    var requiresInteractiveKeyboardInput = false
+    var onEscapeKey: (() -> Bool)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if isEscapeKey(event), onEscapeKey?() == true {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if isEscapeKey(event), onEscapeKey?() == true {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if requiresInteractiveKeyboardInput {
+            NSApp.activate(ignoringOtherApps: true)
+            makeKey()
+        }
+        super.mouseDown(with: event)
+    }
+
+    private func isEscapeKey(_ event: NSEvent) -> Bool {
+        event.keyCode == 53
+            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+    }
 }

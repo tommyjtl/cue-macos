@@ -204,9 +204,17 @@ final class PermissionManager {
     var hasStaleScreenCaptureGrant: Bool {
         guard isLikelyEligibleForScreenCaptureGrant else { return false }
         guard !hasScreenCapturePermission() else { return false }
-        let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
+        guard let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint) else {
+            return false
+        }
+
         let current = executableFingerprint()
-        return stored != nil && stored != current
+        if CodeSigningDiagnostics.fingerprintsMatch(stored, current) {
+            migrateStoredScreenCaptureFingerprintIfNeeded(from: stored, to: current)
+            return false
+        }
+
+        return true
     }
 
     var unsignedBuildHint: String {
@@ -297,9 +305,10 @@ final class PermissionManager {
 
     func permissionDiagnosticsSummary() -> String {
         let ax = hasAccessibilityPermission()
+        let axLive = AccessibilityClient.canCreateListenOnlyEventTap()
         let sr = hasScreenCapturePermission()
         let preflight = CGPreflightScreenCaptureAccess()
-        return "AX=\(ax) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
+        return "AX=\(ax) AXLive=\(axLive) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
     }
 
     // MARK: - Private
@@ -308,6 +317,11 @@ final class PermissionManager {
         screenCaptureGranted = true
         lastSCKVerificationAt = Date()
         UserDefaults.standard.set(executableFingerprint(), forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
+    }
+
+    private func migrateStoredScreenCaptureFingerprintIfNeeded(from stored: String, to current: String) {
+        guard stored != current else { return }
+        UserDefaults.standard.set(current, forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
     }
 
     private func openSystemPrivacySettings(pane: String) {

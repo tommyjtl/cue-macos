@@ -206,7 +206,7 @@ final class HotkeyManager {
     func refreshAccessibilityDependentMonitors() {
         if permissionManager.hasAccessibilityPermission() {
             installGlobalMonitorsIfNeeded()
-        } else {
+        } else if globalFlagsMonitor != nil || globalKeyDownMonitor != nil {
             removeGlobalMonitors()
             print("[HotkeyManager] Accessibility not granted — global shortcuts (double Shift/Option) inactive")
         }
@@ -229,6 +229,10 @@ final class HotkeyManager {
     private func installGlobalMonitorsIfNeeded() {
         guard permissionManager.hasAccessibilityPermission() else {
             print("[HotkeyManager] Skipping global monitors — Accessibility not granted yet")
+            return
+        }
+
+        if globalFlagsMonitor != nil, globalKeyDownMonitor != nil {
             return
         }
 

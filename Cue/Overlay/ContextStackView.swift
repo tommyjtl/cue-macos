@@ -45,8 +45,8 @@ struct ContextStackView: View {
     let onLoadMostRecent: () -> Void
     let onSetWebSearchEnabled: (Bool) -> Void
     let onRemoveContextItem: (ContextPreviewItem) -> Void
+    let onEscape: () -> Void
 
-    @FocusState private var isComposerFocused: Bool
     @State private var scrollDebounceTask: Task<Void, Never>?
 
     var body: some View {
@@ -62,13 +62,6 @@ struct ContextStackView: View {
         .frame(width: model.mode == .chat ? 360 : StackLayout.outerSize)
         .background(backgroundShape)
         .overlay(borderShape)
-        .shadow(color: shadowColor, radius: shadowRadius, y: shadowYOffset)
-        .onAppear {
-            requestComposerFocusIfNeeded()
-        }
-        .onChange(of: model.composerFocusRequestID) { _, _ in
-            requestComposerFocusIfNeeded()
-        }
     }
 
     @ViewBuilder
@@ -85,18 +78,6 @@ struct ContextStackView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(0.14))
         }
-    }
-
-    private var shadowColor: Color {
-        model.mode == .chat ? .black.opacity(0.18) : .clear
-    }
-
-    private var shadowRadius: CGFloat {
-        model.mode == .chat ? 20 : 0
-    }
-
-    private var shadowYOffset: CGFloat {
-        model.mode == .chat ? 10 : 0
     }
 
     private var stackContent: some View {
@@ -179,21 +160,24 @@ struct ContextStackView: View {
                 ComposerContextShelf(items: contextPreviewItems, onRemove: onRemoveContextItem)
             }
 
-            TextField(composerPlaceholder, text: $model.draftMessage)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .frame(height: 40)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .focused($isComposerFocused)
-                .onSubmit {
+            ComposerTextField(
+                text: $model.draftMessage,
+                placeholder: composerPlaceholder,
+                focusRequestID: model.composerFocusRequestID,
+                onSubmit: {
                     guard !model.isSending,
                           !model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         return
                     }
 
                     onSend()
-                }
+                },
+                onEscape: onEscape
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(height: 40)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             HStack(alignment: .center) {
                 Button("Clear") {
@@ -332,16 +316,6 @@ struct ContextStackView: View {
     private func scrollTranscriptToBottom(using proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             proxy.scrollTo(ScrollAnchorID.transcriptBottom, anchor: .bottom)
-        }
-    }
-
-    private func requestComposerFocusIfNeeded() {
-        guard model.mode == .chat else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            isComposerFocused = true
         }
     }
 
@@ -895,6 +869,143 @@ private struct ContextStackPreviewCard: View {
         case let .browserPage(context):
             return !context.displayDomain.isEmpty
         }
+    }
+}
+
+// MARK: - Composer input
+
+private struct ComposerTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let focusRequestID: UUID
+    let onSubmit: () -> Void
+    let onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit, onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = FirstMouseTextField()
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        textField.font = .systemFont(ofSize: NSFont.systemFontSize)
+        textField.placeholderString = placeholder
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.delegate = context.coordinator
+        textField.cell?.wraps = false
+        textField.cell?.isScrollable = true
+        textField.cell?.truncatesLastVisibleLine = false
+        textField.stringValue = text
+        return textField
+    }
+
+    func updateNSView(_ textField: NSTextField, context: Context) {
+        context.coordinator.onSubmit = onSubmit
+        context.coordinator.onEscape = onEscape
+
+        if textField.placeholderString != placeholder {
+            textField.placeholderString = placeholder
+        }
+
+        if textField.stringValue != text {
+            if text.isEmpty {
+                applyText(text, to: textField)
+            } else if context.coordinator.shouldApplyExternalTextUpdate(for: textField) {
+                textField.stringValue = text
+            }
+        }
+
+        if context.coordinator.lastFocusRequestID != focusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            textField.window?.makeKey()
+            textField.window?.makeFirstResponder(textField)
+        }
+    }
+
+    private func applyText(_ text: String, to textField: NSTextField) {
+        if let editor = textField.currentEditor() as? NSTextView {
+            editor.string = text
+        }
+        textField.stringValue = text
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        var onSubmit: () -> Void
+        var onEscape: () -> Void
+        var lastFocusRequestID: UUID?
+
+        init(text: Binding<String>, onSubmit: @escaping () -> Void, onEscape: @escaping () -> Void) {
+            _text = text
+            self.onSubmit = onSubmit
+            self.onEscape = onEscape
+        }
+
+        func shouldApplyExternalTextUpdate(for textField: NSTextField) -> Bool {
+            guard let editor = textField.currentEditor() else {
+                return true
+            }
+
+            return textField.window?.firstResponder !== editor
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else {
+                return
+            }
+
+            text = textField.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                onSubmit()
+                return true
+            }
+
+            if commandSelector == #selector(NSText.selectAll(_:)) {
+                textView.selectAll(nil)
+                return true
+            }
+
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                onEscape()
+                return true
+            }
+
+            return false
+        }
+    }
+}
+
+private final class FirstMouseTextField: NSTextField {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKey()
+        super.mouseDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "a" {
+            if let editor = currentEditor() {
+                editor.selectAll(nil)
+                return true
+            }
+
+            selectText(nil)
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 }
 

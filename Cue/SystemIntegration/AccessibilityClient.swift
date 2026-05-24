@@ -1,22 +1,55 @@
 import ApplicationServices
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// Thin wrappers around macOS Accessibility APIs used by Cue.
 enum AccessibilityClient {
+    private static let eventTapCallback: CGEventTapCallBack = { _, _, event, _ in
+        Unmanaged.passUnretained(event)
+    }
+
     static func isProcessTrusted(prompt: Bool = false) -> Bool {
         guard prompt else {
-            return AXIsProcessTrusted()
+            return resolveTrustedState()
         }
 
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        _ = AXIsProcessTrustedWithOptions(options)
+        return resolveTrustedState()
+    }
+
+    /// Combines `AXIsProcessTrusted` with a live TCC probe. Cached AX trust can stay
+    /// true after macOS revokes permission (e.g. post-update TCC roll); a listen-only
+    /// event tap consults the live database without intercepting events.
+    static func resolveTrustedState(cachedTrusted: Bool = AXIsProcessTrusted(), liveTrusted: Bool = canCreateListenOnlyEventTap()) -> Bool {
+        if cachedTrusted, !liveTrusted {
+            return false
+        }
+        return cachedTrusted || liveTrusted
+    }
+
+    static func canCreateListenOnlyEventTap() -> Bool {
+        let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: eventMask,
+            callback: eventTapCallback,
+            userInfo: nil
+        ) else {
+            return false
+        }
+
+        CFMachPortInvalidate(tap)
+        return true
     }
 
     /// True when Accessibility is granted and Cue can query at least one other running app's AX tree.
     /// Returns true when no other regular apps are running (nothing to probe).
     static func canQueryOtherApplicationsTree() -> Bool {
-        guard isProcessTrusted() else { return false }
+        guard resolveTrustedState() else { return false }
 
         var probedAnyOtherApp = false
         var queriedAnySuccessfully = false
