@@ -37,6 +37,12 @@ struct ContextStackView: View {
         static let outerSize: CGFloat = stageSize + (shadowBleed * 2)
     }
 
+    private enum ComposerLayout {
+        static let controlFont = Font.system(size: 13)
+        static let controlFontSize: CGFloat = 13
+        static let cornerRadius: CGFloat = 14
+    }
+
     @Bindable var model: ContextPanelViewModel
     let onClear: () -> Void
     let onCloseChat: () -> Void
@@ -45,8 +51,8 @@ struct ContextStackView: View {
     let onLoadMostRecent: () -> Void
     let onSetWebSearchEnabled: (Bool) -> Void
     let onRemoveContextItem: (ContextPreviewItem) -> Void
+    let onEscape: () -> Void
 
-    @FocusState private var isComposerFocused: Bool
     @State private var scrollDebounceTask: Task<Void, Never>?
 
     var body: some View {
@@ -62,13 +68,6 @@ struct ContextStackView: View {
         .frame(width: model.mode == .chat ? 360 : StackLayout.outerSize)
         .background(backgroundShape)
         .overlay(borderShape)
-        .shadow(color: shadowColor, radius: shadowRadius, y: shadowYOffset)
-        .onAppear {
-            requestComposerFocusIfNeeded()
-        }
-        .onChange(of: model.composerFocusRequestID) { _, _ in
-            requestComposerFocusIfNeeded()
-        }
     }
 
     @ViewBuilder
@@ -85,18 +84,6 @@ struct ContextStackView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(0.14))
         }
-    }
-
-    private var shadowColor: Color {
-        model.mode == .chat ? .black.opacity(0.18) : .clear
-    }
-
-    private var shadowRadius: CGFloat {
-        model.mode == .chat ? 20 : 0
-    }
-
-    private var shadowYOffset: CGFloat {
-        model.mode == .chat ? 10 : 0
     }
 
     private var stackContent: some View {
@@ -150,7 +137,7 @@ struct ContextStackView: View {
                         .font(.headline)
 
                     Text(chatSubtitle)
-                        .font(.caption)
+                        .font(ComposerLayout.controlFont)
                         .foregroundStyle(.secondary)
                 }
 
@@ -179,47 +166,59 @@ struct ContextStackView: View {
                 ComposerContextShelf(items: contextPreviewItems, onRemove: onRemoveContextItem)
             }
 
-            TextField(composerPlaceholder, text: $model.draftMessage)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .frame(height: 40)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .focused($isComposerFocused)
-                .onSubmit {
+            ComposerTextField(
+                text: $model.draftMessage,
+                placeholder: composerPlaceholder,
+                fontSize: ComposerLayout.controlFontSize,
+                focusRequestID: model.composerFocusRequestID,
+                onSubmit: {
                     guard !model.isSending,
                           !model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         return
                     }
 
                     onSend()
-                }
+                },
+                onEscape: onEscape
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(height: 38)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+            }
 
             HStack(alignment: .center) {
                 Button("Clear") {
                     onClear()
                 }
                 .buttonStyle(.borderless)
+                .font(ComposerLayout.controlFont)
 
                 if model.messages.isEmpty && model.hasSavedConversations {
                     Button("Load recent chat") {
                         onLoadMostRecent()
                     }
                     .buttonStyle(.borderless)
-                }
-
-                if model.supportsWebSearch {
-                    Toggle("Web Search", isOn: webSearchBinding)
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-                        .help(model.isWebSearchEnabled ? "Disable web search for this provider" : "Enable web search for this provider")
-
-                    Text("Web Search")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .font(ComposerLayout.controlFont)
                 }
 
                 Spacer(minLength: 12)
+
+                if model.supportsWebSearch {
+                    HStack(spacing: 6) {
+                        Toggle("Web Search", isOn: webSearchBinding)
+                            .toggleStyle(.checkbox)
+                            .labelsHidden()
+                            .help(model.isWebSearchEnabled ? "Disable web search for this provider" : "Enable web search for this provider")
+
+                        Text("Web Search")
+                            .font(ComposerLayout.controlFont)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Button {
                     if model.isSending {
@@ -242,14 +241,7 @@ struct ContextStackView: View {
 
     private var transcriptContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if model.messages.isEmpty {
-                Text(emptyConversationText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            } else {
+            if !model.messages.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -318,10 +310,6 @@ struct ContextStackView: View {
         return "\(attachmentSummary) • \(model.providerDisplayName)"
     }
 
-    private var emptyConversationText: String {
-        "Ask a question about the attached context. Replies will come from \(assistantDisplayName)."
-    }
-
     private var composerPlaceholder: String {
         if !model.browserPageContexts.isEmpty {
             return "Ask about the attached web page..."
@@ -332,16 +320,6 @@ struct ContextStackView: View {
     private func scrollTranscriptToBottom(using proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             proxy.scrollTo(ScrollAnchorID.transcriptBottom, anchor: .bottom)
-        }
-    }
-
-    private func requestComposerFocusIfNeeded() {
-        guard model.mode == .chat else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            isComposerFocused = true
         }
     }
 
@@ -895,6 +873,149 @@ private struct ContextStackPreviewCard: View {
         case let .browserPage(context):
             return !context.displayDomain.isEmpty
         }
+    }
+}
+
+// MARK: - Composer input
+
+private struct ComposerTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let fontSize: CGFloat
+    let focusRequestID: UUID
+    let onSubmit: () -> Void
+    let onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit, onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = FirstMouseTextField()
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        textField.font = NSFont.systemFont(ofSize: fontSize)
+        textField.placeholderString = placeholder
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.delegate = context.coordinator
+        textField.cell?.wraps = false
+        textField.cell?.isScrollable = true
+        textField.cell?.truncatesLastVisibleLine = false
+        textField.stringValue = text
+        return textField
+    }
+
+    func updateNSView(_ textField: NSTextField, context: Context) {
+        context.coordinator.onSubmit = onSubmit
+        context.coordinator.onEscape = onEscape
+
+        let font = NSFont.systemFont(ofSize: fontSize)
+        if textField.font != font {
+            textField.font = font
+        }
+
+        if textField.placeholderString != placeholder {
+            textField.placeholderString = placeholder
+        }
+
+        if textField.stringValue != text {
+            if text.isEmpty {
+                applyText(text, to: textField)
+            } else if context.coordinator.shouldApplyExternalTextUpdate(for: textField) {
+                textField.stringValue = text
+            }
+        }
+
+        if context.coordinator.lastFocusRequestID != focusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            textField.window?.makeKey()
+            textField.window?.makeFirstResponder(textField)
+        }
+    }
+
+    private func applyText(_ text: String, to textField: NSTextField) {
+        if let editor = textField.currentEditor() as? NSTextView {
+            editor.string = text
+        }
+        textField.stringValue = text
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        var onSubmit: () -> Void
+        var onEscape: () -> Void
+        var lastFocusRequestID: UUID?
+
+        init(text: Binding<String>, onSubmit: @escaping () -> Void, onEscape: @escaping () -> Void) {
+            _text = text
+            self.onSubmit = onSubmit
+            self.onEscape = onEscape
+        }
+
+        func shouldApplyExternalTextUpdate(for textField: NSTextField) -> Bool {
+            guard let editor = textField.currentEditor() else {
+                return true
+            }
+
+            return textField.window?.firstResponder !== editor
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else {
+                return
+            }
+
+            text = textField.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                onSubmit()
+                return true
+            }
+
+            if commandSelector == #selector(NSText.selectAll(_:)) {
+                textView.selectAll(nil)
+                return true
+            }
+
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                onEscape()
+                return true
+            }
+
+            return false
+        }
+    }
+}
+
+private final class FirstMouseTextField: NSTextField {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKey()
+        super.mouseDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "a" {
+            if let editor = currentEditor() {
+                editor.selectAll(nil)
+                return true
+            }
+
+            selectText(nil)
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 }
 

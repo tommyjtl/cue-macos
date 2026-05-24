@@ -84,4 +84,8 @@ final class OverlayCoordinator {
     func hide() {
         windowController.hide()
     }
+
+    func handleEscapeRollback() {
+        windowController.handleEscapeRollback()
+    }
 }

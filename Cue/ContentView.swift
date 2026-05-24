@@ -48,10 +48,20 @@ private struct WorkspaceDetailView: View {
             DebugWorkspaceView()
         case .permissions:
             PermissionsSettingsView()
-        case .shortcuts:
-            ShortcutsSettingsView()
-        case .providers:
-            ProvidersSettingsView()
+        case .general:
+            GeneralSettingsView()
+        }
+    }
+}
+
+private struct GeneralSettingsView: View {
+    var body: some View {
+        SettingsDetailScaffold(title: "General") {
+            VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                SoundEffectsSettingsSection()
+                ShortcutSettingsSection()
+                ConversationSettingsSection()
+            }
         }
     }
 }
@@ -60,7 +70,10 @@ private struct PermissionsSettingsView: View {
     @Environment(AppModel.self) private var appState
 
     var body: some View {
-        SettingsDetailScaffold(title: "Permissions", subtitle: "Screen Recording and Accessibility are required for capture and global shortcuts.") {
+        SettingsDetailScaffold(
+            title: "Permissions",
+            subtitle: "Screen Recording and Accessibility are required for capture and global shortcuts."
+        ) {
             PermissionsSettingsSection()
         }
         .task {
@@ -69,66 +82,30 @@ private struct PermissionsSettingsView: View {
     }
 }
 
-private struct ShortcutsSettingsView: View {
-    var body: some View {
-        SettingsDetailScaffold(title: "Shortcuts", subtitle: "Customize how you add context and open the chat composer.") {
-            ShortcutSettingsSection()
-        }
-    }
-}
-
-private struct ProvidersSettingsView: View {
-    var body: some View {
-        SettingsDetailScaffold(title: "Providers", subtitle: "Configure the model provider and API keys used by Cue.") {
-            ConversationSettingsSection()
-        }
-    }
-}
-
-private struct SettingsDetailScaffold<Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                content
-            }
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-}
-
 private struct CurrentSessionView: View {
     @Environment(AppModel.self) private var appState
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                SettingsPageHeader(
+                    title: "Sessions",
+                    subtitle: "Live conversation state used by the overlay composer."
+                )
+
                 ConversationTranscriptPanel(
                     title: "Active Transcript",
                     subtitle: appState.conversationMessages.isEmpty
                         ? "Send a message from the overlay to start a conversation."
-                        : "Live conversation state used by the overlay composer.",
+                        : nil,
                     messages: appState.conversationMessages
                 )
             }
-            .padding(28)
+            .padding(SettingsLayout.pagePadding)
+            .frame(maxWidth: SettingsLayout.pageMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -136,40 +113,39 @@ private struct ConversationHistoryView: View {
     @Environment(AppModel.self) private var appState
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 24) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Recents")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                SettingsPageHeader(title: "Recents")
 
-                if appState.savedConversations.isEmpty {
-                    Text("No saved conversations yet. Send a message from the overlay and Cue will persist the transcript here.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    List(selection: selectionBinding) {
-                        ForEach(appState.savedConversations) { conversation in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(conversation.title)
-                                    .font(.headline)
-                                    .lineLimit(1)
-
-                                Text(conversation.previewText)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-
-                                Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(.vertical, 6)
-                            .tag(conversation.id)
+                Group {
+                    if appState.savedConversations.isEmpty {
+                        SettingsCard {
+                            Text("No saved conversations yet. Send a message from the overlay and Cue will persist the transcript here.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .padding(SettingsLayout.rowHorizontalPadding)
+                                .padding(.vertical, SettingsLayout.rowVerticalPadding)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
+                    } else {
+                        List(selection: selectionBinding) {
+                            ForEach(appState.savedConversations) { conversation in
+                                RecentsConversationRow(conversation: conversation)
+                                    .tag(conversation.id)
+                            }
+                        }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .background(
+                            SettingsLayout.cardBackground,
+                            in: RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous)
+                        )
                     }
-                    .listStyle(.sidebar)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(minWidth: 300, maxWidth: 360, maxHeight: .infinity, alignment: .topLeading)
+            .frame(minWidth: 280, maxWidth: 340, maxHeight: .infinity, alignment: .topLeading)
 
             ConversationTranscriptPanel(
                 title: selectedConversation?.title ?? "Conversation Preview",
@@ -177,7 +153,7 @@ private struct ConversationHistoryView: View {
                 messages: selectedConversation?.messages ?? []
             )
         }
-        .padding(28)
+        .padding(SettingsLayout.pagePadding)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -197,72 +173,97 @@ private struct ConversationHistoryView: View {
     }
 }
 
+private struct RecentsConversationRow: View {
+    let conversation: PersistedConversation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(conversation.title)
+                .font(.system(size: 14, weight: .semibold))
+
+            Text(conversation.previewText)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 6)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
 private struct DebugWorkspaceView: View {
     @Environment(AppModel.self) private var appState
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Debug")
-                        .font(.title2)
-                        .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                SettingsPageHeader(
+                    title: "Debug",
+                    subtitle: "Runtime errors and fallback diagnostics collected from the current app session."
+                )
 
-                    Text("Runtime errors and fallback diagnostics collected from the current app session.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Error Log")
+                                .font(.system(size: 15, weight: .semibold))
 
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Error Log")
-                            .font(.headline)
+                            Spacer()
 
-                        Spacer()
-
-                        Button("Clear Log") {
-                            appState.clearDebugLog()
-                        }
-                        .disabled(appState.debugLogEntries.isEmpty)
-                    }
-
-                    if appState.debugLogEntries.isEmpty {
-                        Text("No errors logged in this session yet.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
-                            .padding(18)
-                            .background(.quinary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(appState.debugLogEntries) { entry in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(entry.source.rawValue)
-                                            .font(.caption)
-                                            .fontWeight(.semibold)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(.quaternary, in: Capsule())
-
-                                        Spacer()
-
-                                        Text(entry.timestamp.formatted(date: .abbreviated, time: .standard))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Text(entry.message)
-                                        .textSelection(.enabled)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(16)
-                                .background(.quinary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            SettingsChangeButton("Clear") {
+                                appState.clearDebugLog()
                             }
+                            .disabled(appState.debugLogEntries.isEmpty)
+                        }
+                        .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                        .padding(.top, SettingsLayout.rowVerticalPadding)
+
+                        if appState.debugLogEntries.isEmpty {
+                            Text("No errors logged in this session yet.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+                                .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                                .padding(.bottom, SettingsLayout.rowVerticalPadding)
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(appState.debugLogEntries) { entry in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Text(entry.source.rawValue)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(SettingsLayout.insetBackground, in: Capsule())
+
+                                            Spacer()
+
+                                            Text(entry.timestamp.formatted(date: .abbreviated, time: .standard))
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.secondary)
+                                        }
+
+                                        Text(entry.message)
+                                            .font(.system(size: 13))
+                                            .textSelection(.enabled)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(14)
+                                    .background(SettingsLayout.insetBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                }
+                            }
+                            .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                            .padding(.bottom, SettingsLayout.rowVerticalPadding)
                         }
                     }
                 }
             }
-            .padding(28)
+            .padding(SettingsLayout.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -271,25 +272,27 @@ private struct DebugWorkspaceView: View {
 
 private struct ConversationTranscriptPanel: View {
     let title: String
-    let subtitle: String
+    let subtitle: String?
     let messages: [ConversationMessageDTO]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.headline)
+                .font(.system(size: 15, weight: .semibold))
 
-            if !subtitle.isEmpty {
+            if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
 
             if messages.isEmpty {
                 Text("No messages yet")
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
                     .padding(18)
-                    .background(.quinary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(SettingsLayout.cardBackground, in: RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous))
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -301,7 +304,7 @@ private struct ConversationTranscriptPanel: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(18)
-                .background(.quinary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(SettingsLayout.cardBackground, in: RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -313,14 +316,20 @@ private struct PermissionsSettingsSection: View {
     private let permissionManager = PermissionManager.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(PermissionItem.all) { item in
-                PermissionStatusRow(
-                    item: item,
-                    isGranted: isGranted(item),
-                    statusMessage: statusMessage(for: item),
-                    onGrant: { grant(item) }
-                )
+        VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+            SettingsCard {
+                ForEach(Array(PermissionItem.all.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        SettingsRowDivider()
+                    }
+
+                    PermissionStatusRow(
+                        item: item,
+                        isGranted: isGranted(item),
+                        statusMessage: statusMessage(for: item),
+                        onGrant: { grant(item) }
+                    )
+                }
             }
 
             if !permissionManager.isLikelyEligibleForScreenCaptureGrant {
@@ -398,22 +407,20 @@ private struct PermissionHelpCallout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .font(.system(size: 14, weight: .semibold))
             Text(message)
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if showsQuitButton {
-                Button("Quit Cue") {
+                SettingsChangeButton("Quit Cue") {
                     NSApp.terminate(nil)
                 }
-                .controlSize(.small)
             }
         }
-        .padding(12)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous))
     }
 }
 
@@ -424,37 +431,15 @@ private struct PermissionStatusRow: View {
     let onGrant: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: item.systemImage)
-                .font(.system(size: 18))
-                .foregroundStyle(isGranted ? .green : .orange)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(isGranted ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
-            }
-
-            Spacer()
-
+        SettingsRow(title: item.title, subtitle: statusMessage) {
             if isGranted {
                 Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
                     .foregroundStyle(.green)
             } else {
-                Button("Enable…", action: onGrant)
-                    .controlSize(.small)
+                SettingsChangeButton("Enable…", action: onGrant)
             }
         }
-        .padding(12)
-        .background(
-            isGranted ? AnyShapeStyle(.clear) : AnyShapeStyle(Color.orange.opacity(0.08)),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
     }
 }
 
@@ -546,7 +531,7 @@ private struct AppSidebar: View {
     @Binding var selectedSection: AppModel.SidebarSection?
 
     private let primarySections: [AppModel.SidebarSection] = [.inbox, .recents]
-    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .shortcuts, .providers]
+    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .general]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

@@ -9,9 +9,9 @@ enum ConversationProvider: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .ollama:
-            "Ollama"
+            "Private mode"
         case .openAI:
-            "OpenAI"
+            "Cloud mode"
         }
     }
 

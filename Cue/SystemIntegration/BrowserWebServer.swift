@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -184,6 +185,8 @@ final class BrowserWebServer: Sendable {
             browserName: payload.browser
         )
 
+        let previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+
         let pushResult: BrowserPagePushResult
         if Thread.isMainThread {
             pushResult = MainActor.assumeIsolated {
@@ -194,6 +197,13 @@ final class BrowserWebServer: Sendable {
                 MainActor.assumeIsolated {
                     onPageReceived(context)
                 }
+            }
+        }
+
+        if let previousFrontmostApp,
+           previousFrontmostApp.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            DispatchQueue.main.async {
+                previousFrontmostApp.activate(options: [])
             }
         }
 

@@ -81,17 +81,13 @@ final class SelectedTextManager {
         }
 
         for (index, element) in candidateElements.enumerated() {
-            let role = copyStringAttribute(
+            let role = AccessibilityClient.copyStringAttribute(
                 element,
-                attribute: kAXRoleAttribute as CFString,
-                loggingMode: loggingMode,
-                logExpectedFailure: false
+                attribute: kAXRoleAttribute as CFString
             )
-            let subrole = copyStringAttribute(
+            let subrole = AccessibilityClient.copyStringAttribute(
                 element,
-                attribute: kAXSubroleAttribute as CFString,
-                loggingMode: loggingMode,
-                logExpectedFailure: false
+                attribute: kAXSubroleAttribute as CFString
             )
             log(
                 "Candidate \(index + 1)/\(candidateElements.count) role=\(role ?? "unknown") subrole=\(subrole ?? "none")",
@@ -113,20 +109,19 @@ final class SelectedTextManager {
         }
 
         let primaryElement = candidateElements[0]
-        let role = copyStringAttribute(
+        let role = AccessibilityClient.copyStringAttribute(
             primaryElement,
-            attribute: kAXRoleAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
+            attribute: kAXRoleAttribute as CFString
         )
-        let subrole = copyStringAttribute(
+        let subrole = AccessibilityClient.copyStringAttribute(
             primaryElement,
-            attribute: kAXSubroleAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
+            attribute: kAXSubroleAttribute as CFString
         )
 
-        if let selectedRange = copySelectedTextRange(primaryElement), selectedRange.length > 0 {
+        if let selectedRange = AccessibilityClient.copyCFRangeAttribute(
+            primaryElement,
+            attribute: kAXSelectedTextRangeAttribute as CFString
+        ), selectedRange.length > 0 {
             log(
                 "Focused element exposes a selected text range but Cue could not resolve the text. location=\(selectedRange.location) length=\(selectedRange.length)",
                 mode: loggingMode
@@ -153,29 +148,25 @@ final class SelectedTextManager {
             roots.append(element)
         }
 
-        appendRoot(copyAXElementAttribute(
+        appendRoot(AccessibilityClient.copyElementAttribute(
             systemWideElement,
-            attribute: kAXFocusedUIElementAttribute as CFString,
-            loggingMode: loggingMode
+            attribute: kAXFocusedUIElementAttribute as CFString
         ))
 
         if let pid = frontmostApplication?.processIdentifier {
             let appElement = AXUIElementCreateApplication(pid)
-            appendRoot(copyAXElementAttribute(
+            appendRoot(AccessibilityClient.copyElementAttribute(
                 appElement,
-                attribute: kAXFocusedUIElementAttribute as CFString,
-                loggingMode: loggingMode
+                attribute: kAXFocusedUIElementAttribute as CFString
             ))
 
-            if let focusedWindow = copyAXElementAttribute(
+            if let focusedWindow = AccessibilityClient.copyElementAttribute(
                 appElement,
-                attribute: kAXFocusedWindowAttribute as CFString,
-                loggingMode: loggingMode
+                attribute: kAXFocusedWindowAttribute as CFString
             ) {
-                appendRoot(copyAXElementAttribute(
+                appendRoot(AccessibilityClient.copyElementAttribute(
                     focusedWindow,
-                    attribute: kAXFocusedUIElementAttribute as CFString,
-                    loggingMode: loggingMode
+                    attribute: kAXFocusedUIElementAttribute as CFString
                 ))
             }
         }
@@ -194,10 +185,9 @@ final class SelectedTextManager {
             var depth = 0
             while let element = current, depth < maxParentTraversalDepth {
                 appendCandidate(element)
-                current = copyAXElementAttribute(
+                current = AccessibilityClient.copyElementAttribute(
                     element,
-                    attribute: kAXParentAttribute as CFString,
-                    loggingMode: loggingMode
+                    attribute: kAXParentAttribute as CFString
                 )
                 depth += 1
             }
@@ -207,11 +197,9 @@ final class SelectedTextManager {
     }
 
     private func selectedText(from element: AXUIElement, loggingMode: LoggingMode) -> String? {
-        if let direct = copyStringAttribute(
+        if let direct = AccessibilityClient.copyStringAttribute(
             element,
-            attribute: kAXSelectedTextAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
+            attribute: kAXSelectedTextAttribute as CFString
         ) {
             let trimmedText = direct.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedText.isEmpty {
@@ -219,22 +207,27 @@ final class SelectedTextManager {
             }
         }
 
-        guard let selectedRange = copySelectedTextRange(element), selectedRange.length > 0 else {
+        guard let selectedRange = AccessibilityClient.copyCFRangeAttribute(
+            element,
+            attribute: kAXSelectedTextRangeAttribute as CFString
+        ), selectedRange.length > 0 else {
             return nil
         }
 
-        if let rangedText = copyStringForRange(element, range: selectedRange, loggingMode: loggingMode) {
+        if let rangedText = AccessibilityClient.copyParameterizedString(
+            element,
+            attribute: kAXStringForRangeParameterizedAttribute as CFString,
+            range: selectedRange
+        ) {
             let trimmedText = rangedText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedText.isEmpty {
                 return trimmedText
             }
         }
 
-        if let valueText = copyStringAttribute(
+        if let valueText = AccessibilityClient.copyStringAttribute(
             element,
-            attribute: kAXValueAttribute as CFString,
-            loggingMode: loggingMode,
-            logExpectedFailure: false
+            attribute: kAXValueAttribute as CFString
         ), selectedRange.length > 0 {
             let nsValue = valueText as NSString
             let safeLocation = min(max(selectedRange.location, 0), nsValue.length)
@@ -249,107 +242,6 @@ final class SelectedTextManager {
         }
 
         return nil
-    }
-
-    private func copyStringForRange(
-        _ element: AXUIElement,
-        range: CFRange,
-        loggingMode: LoggingMode
-    ) -> String? {
-        var cfRange = range
-        guard let axValue = AXValueCreate(.cfRange, &cfRange) else {
-            return nil
-        }
-
-        var result: CFTypeRef?
-        let error = AXUIElementCopyParameterizedAttributeValue(
-            element,
-            kAXStringForRangeParameterizedAttribute as CFString,
-            axValue,
-            &result
-        )
-        guard error == .success else {
-            log(
-                "AX string-for-range unavailable, error=\(error.rawValue)",
-                mode: loggingMode,
-                minimumMode: .verbose
-            )
-            return nil
-        }
-
-        return result as? String
-    }
-
-    private func copyAXElementAttribute(
-        _ element: AXUIElement,
-        attribute: CFString,
-        loggingMode: LoggingMode
-    ) -> AXUIElement? {
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
-        guard error == .success else {
-            log("AX copy attribute failed for \(attribute) with error=\(error.rawValue)", mode: loggingMode, minimumMode: .verbose)
-            return nil
-        }
-
-        guard let value else {
-            return nil
-        }
-
-        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            log("AX attribute \(attribute) returned a non-AXUIElement value.", mode: loggingMode, minimumMode: .verbose)
-            return nil
-        }
-
-        return (value as! AXUIElement)
-    }
-
-    private func copyStringAttribute(
-        _ element: AXUIElement,
-        attribute: CFString,
-        loggingMode: LoggingMode,
-        logExpectedFailure: Bool
-    ) -> String? {
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
-        guard error == .success else {
-            if logExpectedFailure {
-                log("AX string attribute \(attribute) unavailable, error=\(error.rawValue)", mode: loggingMode)
-            } else {
-                log(
-                    "AX string attribute \(attribute) unavailable, error=\(error.rawValue)",
-                    mode: loggingMode,
-                    minimumMode: .verbose
-                )
-            }
-            return nil
-        }
-
-        return value as? String
-    }
-
-    private func copySelectedTextRange(_ element: AXUIElement) -> CFRange? {
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value)
-        guard error == .success, let value else {
-            return nil
-        }
-
-        guard CFGetTypeID(value) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        let axValue = unsafeBitCast(value, to: AXValue.self)
-        guard AXValueGetType(axValue) == .cfRange else {
-            return nil
-        }
-
-        var range = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &range) else {
-            return nil
-        }
-
-        return range
     }
 
     private func log(_ message: String, mode: LoggingMode, minimumMode: LoggingMode = .concise) {

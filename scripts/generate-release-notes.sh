@@ -53,6 +53,14 @@ if [[ -z "${RELEASE_NOTES_API_KEY:-}" ]]; then
   exit 1
 fi
 
+PR_CONTEXT=""
+if command -v gh >/dev/null 2>&1; then
+  PR_CONTEXT="$(python3 "$ROOT/scripts/collect-release-pr-context.py" "${PREV_TAG:-}" 2>/dev/null || true)"
+fi
+if [[ -z "$PR_CONTEXT" ]]; then
+  PR_CONTEXT="No merged pull request descriptions were collected (gh unavailable or no PRs in range)."
+fi
+
 PROMPT="$(cat <<EOF
 You write GitHub release notes for Cue, a macOS menu-bar utility for capturing screen context and chatting with AI.
 
@@ -62,7 +70,8 @@ Commit range: ${RANGE}
 Commits:
 EOF
 )"
-PROMPT+=$(printf '%s' "$COMMIT_LOG")
+PROMPT+=$(printf '%s\n' "$COMMIT_LOG")
+PROMPT+=$(printf '\n\nMerged pull requests:\n%s\n' "$PR_CONTEXT")
 PROMPT+=$(cat <<'EOF'
 
 Write release notes in Markdown with exactly these two sections:
@@ -74,8 +83,9 @@ Audience: non-developer macOS users. Plain language, 3-6 bullet points max. Focu
 Audience: contributors and developers. Technical bullets covering architecture, dependencies, build/signing, API changes, and migration notes if any.
 
 Rules:
-- Use only facts supported by the commit list; do not invent features.
-- If the commit list is sparse, say so briefly and keep bullets minimal.
+- Use only facts supported by the commit list and merged pull request descriptions; do not invent features.
+- Prefer PR descriptions for user-facing detail when they add context beyond commit subjects.
+- If the source material is sparse, say so briefly and keep bullets minimal.
 - Do not wrap the whole response in a code fence.
 EOF
 )

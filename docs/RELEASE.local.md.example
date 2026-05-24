@@ -18,6 +18,8 @@ Copy to `docs/RELEASE.local.md` (gitignored) and configure these GitHub reposito
 |--------|-------------|
 | `RELEASE_NOTES_API_KEY` | OpenAI API key for AI-generated release notes |
 
+Release notes generation also uses the GitHub CLI (`gh`) to load **merged PR titles and bodies** for commits since the previous tag. In CI this uses `GITHUB_TOKEN` automatically; locally run `gh auth login` against the repo.
+
 ## Export certificate as base64
 
 ```bash

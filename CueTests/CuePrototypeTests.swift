@@ -6,7 +6,7 @@
 //
 
 import Testing
-@testable import CuePrototype
+@testable import Cue
 
 struct CuePrototypeTests {
 

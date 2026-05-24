@@ -30,6 +30,7 @@ final class AppModel {
         static let captureShortcut = "capture-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
+        static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -37,8 +38,7 @@ final class AppModel {
         case recents
         case debug
         case permissions
-        case shortcuts
-        case providers
+        case general
 
         var id: Self { self }
 
@@ -52,10 +52,8 @@ final class AppModel {
                 "Debug"
             case .permissions:
                 "Permissions"
-            case .shortcuts:
-                "Shortcuts"
-            case .providers:
-                "Providers"
+            case .general:
+                "General"
             }
         }
 
@@ -69,10 +67,8 @@ final class AppModel {
                 "ladybug"
             case .permissions:
                 "lock.shield"
-            case .shortcuts:
-                "keyboard"
-            case .providers:
-                "server.rack"
+            case .general:
+                "slider.horizontal.3"
             }
         }
     }
@@ -90,8 +86,7 @@ final class AppModel {
     @ObservationIgnored private let conversationStore: ConversationStore?
     @ObservationIgnored private var conversationCoordinator: ConversationCoordinator?
     @ObservationIgnored private var browserWebServer: BrowserWebServer?
-    @ObservationIgnored private var permissionMonitorTask: Task<Void, Never>?
-    @ObservationIgnored private var permissionPollTask: Task<Void, Never>?
+    @ObservationIgnored private var permissionMonitor: PermissionMonitor?
     private var hasStartedBackgroundServices = false
 
     // Observable permission state — updated from AppModel's stable monitoring tasks,
@@ -102,6 +97,7 @@ final class AppModel {
 
     var selectedSection: SidebarSection? = .inbox
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
+    var soundEffectsEnabled: Bool
     var captureShortcut: CaptureShortcut
     var conversationConfiguration: ConversationConfiguration
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
@@ -132,6 +128,7 @@ final class AppModel {
 
     init() {
         conversationStore = try? ConversationStore()
+        soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
@@ -224,7 +221,7 @@ final class AppModel {
             },
             onDismissOverlayTrigger: { [weak self] in
                 Task { @MainActor in
-                    self?.dismissVisibleContextOverlayIfNeeded()
+                    self?.handleOverlayEscapeRollback()
                 }
             },
             onPrefetchSelectedText: { [weak self] in
@@ -238,42 +235,11 @@ final class AppModel {
     // MARK: - Permission Monitoring
 
     private func startPermissionMonitoring() {
-        let permManager = PermissionManager.shared
-
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            await permManager.registerScreenCaptureIfNeeded()
-            refreshPermissionState(from: permManager)
+        let monitor = PermissionMonitor()
+        permissionMonitor = monitor
+        monitor.start { [weak self] permManager in
+            self?.refreshPermissionState(from: permManager)
         }
-
-        permissionMonitorTask = Task { [weak self] in
-            let stream = Self.axPermissionNotificationStream()
-            for await _ in stream {
-                try? await Task.sleep(for: .milliseconds(500))
-                self?.refreshPermissionState(from: permManager)
-            }
-        }
-
-        permissionPollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.refreshPermissionState(from: permManager)
-                let delay: Duration = (self?.hasAllPermissionsGranted == true) ? .seconds(2) : .milliseconds(500)
-                try? await Task.sleep(for: delay)
-            }
-        }
-
-        Task { [weak self] in
-            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
-                try? await Task.sleep(for: .milliseconds(400))
-                print("[AppModel] didBecomeActive — \(permManager.permissionDiagnosticsSummary())")
-                _ = await permManager.verifyScreenCaptureAccess(force: true)
-                self?.refreshPermissionState(from: permManager)
-            }
-        }
-    }
-
-    private var hasAllPermissionsGranted: Bool {
-        screenRecordingGranted && accessibilityGranted
     }
 
     func refreshPermissions() async {
@@ -297,25 +263,6 @@ final class AppModel {
         needsRestartForPermissions = newRestart
 
         hotkeyManager?.refreshAccessibilityDependentMonitors()
-    }
-
-    private static func axPermissionNotificationStream() -> AsyncStream<Void> {
-        AsyncStream { continuation in
-            let center = DistributedNotificationCenter.default()
-            print("[AppModel] Registered DistributedNotificationCenter observer for com.apple.accessibility.api")
-            let observer = center.addObserver(
-                forName: NSNotification.Name("com.apple.accessibility.api"),
-                object: nil,
-                queue: .main
-            ) { _ in
-                print("[AppModel] Received com.apple.accessibility.api — scheduling refresh in 500 ms")
-                continuation.yield()
-            }
-            continuation.onTermination = { _ in
-                print("[AppModel] Removing DistributedNotificationCenter observer")
-                center.removeObserver(observer)
-            }
-        }
     }
 
     // MARK: - Capture
@@ -436,11 +383,15 @@ final class AppModel {
     }
 
     func dismissVisibleContextOverlayIfNeeded() {
+        handleOverlayEscapeRollback()
+    }
+
+    func handleOverlayEscapeRollback() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
-        clearContextStack()
+        overlayCoordinator?.handleEscapeRollback()
     }
 
     func showMainWindow() {
@@ -452,8 +403,19 @@ final class AppModel {
     }
 
     func showSettingsInMainWindow() {
-        selectedSection = .permissions
+        selectedSection = hasRequiredPermissionsForGeneralSettings ? .general : .permissions
         showMainWindow()
+    }
+
+    var hasRequiredPermissionsForGeneralSettings: Bool {
+        let permissionManager = PermissionManager.shared
+        return permissionManager.hasScreenCapturePermission()
+            && permissionManager.hasAccessibilityPermission()
+    }
+
+    func updateSoundEffectsEnabled(_ isEnabled: Bool) {
+        soundEffectsEnabled = isEnabled
+        saveSoundEffectsEnabled(isEnabled)
     }
 
     func completeOnboarding() {
@@ -661,6 +623,14 @@ final class AppModel {
         conversationConfiguration = .defaultValue
     }
 
+    private static func loadSoundEffectsEnabled() -> Bool {
+        AppPreferenceKeys.soundEffectsEnabled
+    }
+
+    private func saveSoundEffectsEnabled(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.soundEffectsEnabled)
+    }
+
     private func syncOverlayState() {
         overlayCoordinator?.update(
             snapshot: OverlayCoordinator.Snapshot(
@@ -720,11 +690,22 @@ final class AppModel {
     }
 
     private func applyContextSnapshot(_ snapshot: ContextSession.Snapshot) {
+        let previousContextItemCount = contextItemCount
+
         capturedScreenshots = snapshot.capturedScreenshots
         selectedTextContexts = snapshot.selectedTextContexts
         browserPageContexts = snapshot.browserPageContexts
         isCaptureInProgress = snapshot.isCaptureInProgress
+
+        if contextItemCount > previousContextItemCount {
+            SoundEffectPlayer.play(.contextAttached)
+        }
+
         syncOverlayState()
+    }
+
+    private var contextItemCount: Int {
+        capturedScreenshots.count + selectedTextContexts.count + browserPageContexts.count
     }
 }
 
@@ -784,20 +765,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class MainContentWindowController: NSWindowController {
+final class MainContentWindowController: NSWindowController, NSWindowDelegate {
     init(appModel: AppModel) {
-        let hostingController = NSHostingController(rootView: ContentView().environment(appModel))
+        let hostingController = NSHostingController(
+            rootView: ContentView()
+                .environment(appModel)
+                .frame(
+                    minWidth: SettingsLayout.MainWindow.minWidth,
+                    minHeight: SettingsLayout.MainWindow.minHeight
+                )
+        )
         let window = NSWindow(contentViewController: hostingController)
 
         window.title = "Cue"
-        window.setContentSize(NSSize(width: 960, height: 680))
-        window.minSize = NSSize(width: 760, height: 520)
+        window.setContentSize(
+            NSSize(
+                width: SettingsLayout.MainWindow.defaultWidth,
+                height: SettingsLayout.MainWindow.defaultHeight
+            )
+        )
+        window.minSize = NSSize(
+            width: SettingsLayout.MainWindow.minWidth,
+            height: SettingsLayout.MainWindow.minHeight
+        )
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.center()
 
         super.init(window: window)
+        window.delegate = self
+        clampWindowFrameIfNeeded()
     }
 
     @available(*, unavailable)
@@ -810,8 +808,35 @@ final class MainContentWindowController: NSWindowController {
             return
         }
 
+        clampWindowFrameIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(frameSize.width, SettingsLayout.MainWindow.minWidth),
+            height: max(frameSize.height, SettingsLayout.MainWindow.minHeight)
+        )
+    }
+
+    private func clampWindowFrameIfNeeded() {
+        guard let window else {
+            return
+        }
+
+        var frame = window.frame
+        let minWidth = SettingsLayout.MainWindow.minWidth
+        let minHeight = SettingsLayout.MainWindow.minHeight
+        guard frame.width < minWidth || frame.height < minHeight else {
+            return
+        }
+
+        frame.size = NSSize(
+            width: max(frame.width, minWidth),
+            height: max(frame.height, minHeight)
+        )
+        window.setFrame(frame, display: true)
     }
 }
 
@@ -904,6 +929,34 @@ private struct MenuBarContentView: View {
     }
 }
 
+struct SoundEffectsSettingsSection: View {
+    @Environment(AppModel.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Sound effects",
+                    subtitle: appState.soundEffectsEnabled ? "On" : "Off"
+                ) {
+                    Toggle("Play sound effects", isOn: soundEffectsBinding)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+            }
+
+            SettingsFootnote("Plays when context is attached or chat opens. Requires macOS \"Play user interface sound effects\" in System Settings → Sound.")
+        }
+    }
+
+    private var soundEffectsBinding: Binding<Bool> {
+        Binding(
+            get: { appState.soundEffectsEnabled },
+            set: { appState.updateSoundEffectsEnabled($0) }
+        )
+    }
+}
+
 struct ConversationSettingsSection: View {
     @Environment(AppModel.self) private var appState
     @State private var availableOllamaModels = OllamaModelCatalog.fallbackOptions
@@ -913,101 +966,33 @@ struct ConversationSettingsSection: View {
     private let ollamaModelDiscoveryService = OllamaModelDiscoveryService()
 
     var body: some View {
-        Section("Conversation") {
-            Picker("Provider", selection: appState.conversationConfigurationBinding(for: \.provider)) {
-                ForEach(ConversationProvider.allCases) { provider in
-                    Text(provider.title).tag(provider)
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsSectionHeader(title: "Provider")
+
+            SettingsCard {
+                SettingsCardBody {
+                    SettingsFieldGroup(label: "Provider") {
+                        Picker("Provider", selection: appState.conversationConfigurationBinding(for: \.provider)) {
+                            ForEach(ConversationProvider.allCases) { provider in
+                                Text(provider.title).tag(provider)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                    }
+                }
+
+                SettingsRowDivider()
+
+                switch appState.conversationConfiguration.provider {
+                case .ollama:
+                    ollamaProviderCardContent
+                case .openAI:
+                    openAIProviderCardContent
                 }
             }
 
-            switch appState.conversationConfiguration.provider {
-            case .ollama:
-                TextField("http://localhost:11434", text: appState.conversationConfigurationBinding(for: \.ollamaBaseURL))
-                    .textFieldStyle(.roundedBorder)
-
-                Picker("Model", selection: appState.conversationConfigurationBinding(for: \.ollamaModel)) {
-                    ForEach(availableOllamaModels) { option in
-                        Text(option.pickerTitle).tag(option.modelName)
-                    }
-                }
-
-                HStack {
-                    Button(isRefreshingOllamaModels ? "Refreshing..." : "Refresh Models") {
-                        Task {
-                            await refreshOllamaModels()
-                        }
-                    }
-                    .disabled(isRefreshingOllamaModels)
-
-                    Spacer()
-
-                    Text(selectedOllamaModelOption.source == .installed ? "Installed via /api/tags" : "Curated fallback")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                switch selectedOllamaModelOption.thinkingSupport {
-                case .unsupported:
-                    LabeledContent("Thinking", value: "Unavailable")
-                case .toggle:
-                    Toggle("Enable Thinking", isOn: ollamaThinkingToggleBinding)
-                case let .levels(modes):
-                    Picker("Thinking", selection: appState.conversationConfigurationBinding(for: \.ollamaThinkingMode)) {
-                        ForEach(modes) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                }
-
-                Toggle("Use Web Search", isOn: appState.conversationConfigurationBinding(for: \.ollamaUseWebSearch))
-
-                SecureField("Ollama API Key", text: appState.conversationConfigurationBinding(for: \.ollamaAPIKey))
-                    .textFieldStyle(.roundedBorder)
-
-                Text("When enabled, Ollama conversations may call hosted web search and fetch tools for current information. Provide an Ollama cloud API key here for the prototype, or leave it blank to fall back to `OLLAMA_API_KEY` from the app environment.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Text("Stored in UserDefaults for the prototype. Move this to Keychain before shipping.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Text(selectedOllamaModelOption.summary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Text(selectedOllamaModelOption.thinkingSupport.statusDescription)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                if let ollamaModelsStatus {
-                    Text(ollamaModelsStatus)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            case .openAI:
-                HStack {
-                    TextField("gpt-5.4", text: appState.conversationConfigurationBinding(for: \.openAIModel))
-                        .textFieldStyle(.roundedBorder)
-
-                    Button("Reset to Default") {
-                        appState.resetConversationConfiguration()
-                    }
-                }
-
-                Toggle("Use Web Search", isOn: appState.conversationConfigurationBinding(for: \.openAIUseWebSearch))
-
-                Text("When enabled, OpenAI conversations use the Responses API with the built-in web search tool for current information.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                SecureField("OpenAI API Key", text: appState.conversationConfigurationBinding(for: \.openAIAPIKey))
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Stored in UserDefaults for the prototype. Move this to Keychain before shipping.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            providerFootnotes(outsideCardNotes)
         }
         .onAppear {
             availableOllamaModels = OllamaModelCatalog.mergedOptions(
@@ -1022,6 +1007,141 @@ struct ConversationSettingsSection: View {
         }
         .onChange(of: appState.conversationConfiguration.ollamaModel, initial: false) { _, _ in
             normalizeOllamaThinkingMode()
+        }
+    }
+
+    @ViewBuilder
+    private var ollamaProviderCardContent: some View {
+        SettingsCardBody {
+            SettingsFieldGroup(label: "Base URL") {
+                TextField("http://localhost:11434", text: appState.conversationConfigurationBinding(for: \.ollamaBaseURL))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            SettingsFieldGroup(label: "Model") {
+                Picker("Model", selection: appState.conversationConfigurationBinding(for: \.ollamaModel)) {
+                    ForEach(availableOllamaModels) { option in
+                        Text(option.pickerTitle).tag(option.modelName)
+                    }
+                }
+                .labelsHidden()
+
+                HStack {
+                    Button(isRefreshingOllamaModels ? "Refreshing..." : "Refresh Models") {
+                        Task {
+                            await refreshOllamaModels()
+                        }
+                    }
+                    .disabled(isRefreshingOllamaModels)
+
+                    Spacer()
+
+                    Text(selectedOllamaModelOption.source == .installed ? "Installed via /api/tags" : "Curated fallback")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ollamaThinkingControl
+
+            SettingsFieldGroup(label: "API Key") {
+                SecureField("Ollama API Key", text: appState.conversationConfigurationBinding(for: \.ollamaAPIKey))
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+
+        SettingsRowDivider()
+
+        SettingsToggleRow(
+            title: "Web Search",
+            subtitle: webSearchSubtitle,
+            isOn: appState.conversationConfigurationBinding(for: \.ollamaUseWebSearch)
+        )
+    }
+
+    @ViewBuilder
+    private var openAIProviderCardContent: some View {
+        SettingsCardBody {
+            SettingsFieldGroup(label: "Model") {
+                HStack {
+                    TextField("gpt-5.4", text: appState.conversationConfigurationBinding(for: \.openAIModel))
+                        .textFieldStyle(.roundedBorder)
+
+                    SettingsChangeButton("Reset") {
+                        appState.resetConversationConfiguration()
+                    }
+                }
+            }
+
+            SettingsFieldGroup(label: "API Key") {
+                SecureField("OpenAI API Key", text: appState.conversationConfigurationBinding(for: \.openAIAPIKey))
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+
+        SettingsRowDivider()
+
+        SettingsToggleRow(
+            title: "Web Search",
+            subtitle: webSearchSubtitle,
+            isOn: appState.conversationConfigurationBinding(for: \.openAIUseWebSearch)
+        )
+    }
+
+    private var webSearchSubtitle: String {
+        switch appState.conversationConfiguration.provider {
+        case .ollama:
+            "Use Ollama hosted web search and fetch tools for current information."
+        case .openAI:
+            "Use the OpenAI Responses API web search tool for current information."
+        }
+    }
+
+    @ViewBuilder
+    private var ollamaThinkingControl: some View {
+        switch selectedOllamaModelOption.thinkingSupport {
+        case .unsupported:
+            SettingsFieldGroup(label: "Thinking") {
+                Text("Unavailable for this model")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+        case .toggle:
+            SettingsFieldGroup(label: "Thinking") {
+                Toggle("Enable extended reasoning for supported Ollama models.", isOn: ollamaThinkingToggleBinding)
+            }
+        case let .levels(modes):
+            SettingsFieldGroup(label: "Thinking") {
+                Picker("Thinking", selection: appState.conversationConfigurationBinding(for: \.ollamaThinkingMode)) {
+                    ForEach(modes) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+            }
+        }
+    }
+
+    private var outsideCardNotes: [String?] {
+        switch appState.conversationConfiguration.provider {
+        case .ollama:
+            return [
+                "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping.",
+                selectedOllamaModelOption.summary,
+                selectedOllamaModelOption.thinkingSupport.statusDescription,
+                ollamaModelsStatus
+            ]
+        case .openAI:
+            return [
+                "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping."
+            ]
+        }
+    }
+
+    @ViewBuilder
+    private func providerFootnotes(_ notes: [String?]) -> some View {
+        ForEach(notes.compactMap { $0 }.filter { !$0.isEmpty }, id: \.self) { note in
+            SettingsFootnote(note)
         }
     }
 
@@ -1074,63 +1194,82 @@ struct ConversationSettingsSection: View {
 struct ShortcutSettingsSection: View {
     @Environment(AppModel.self) private var appState
     @State private var draftShortcut = CaptureShortcut.defaultValue
+    @State private var isEditingAddToContext = false
 
     var body: some View {
-        Section("Shortcuts") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent(ShortcutFeatureCopy.openChatName, value: ShortcutFeatureCopy.openChatBinding)
+        SettingsCard {
+            SettingsRow(
+                title: ShortcutFeatureCopy.openChatName,
+                subtitle: ShortcutFeatureCopy.openChatBinding
+            )
 
-                Text(ShortcutFeatureCopy.openChatSummary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            SettingsRowDivider()
 
-                LabeledContent(ShortcutFeatureCopy.addToContextName, value: appState.captureShortcut.displayString)
-
-                Text(ShortcutFeatureCopy.addToContextSummary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Divider()
-
-            Text("Customize Add To Context")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            Picker("Shortcut Type", selection: $draftShortcut.kind) {
-                ForEach(CaptureShortcut.Kind.allCases) { kind in
-                    Text(kind.title).tag(kind)
-                }
-            }
-
-            if draftShortcut.kind == .doubleModifier {
-                Picker("Modifier", selection: doubleModifierRawValueBinding) {
-                    ForEach(CaptureShortcut.doubleModifierOptions, id: \.rawValue) { modifier in
-                        Text(modifierTitle(for: modifier)).tag(modifier.rawValue)
-                    }
-                }
-            } else {
-                Toggle("Shift", isOn: modifierBinding(.shift))
-                Toggle("Option", isOn: modifierBinding(.option))
-                Toggle("Control", isOn: modifierBinding(.control))
-                Toggle("Command", isOn: modifierBinding(.command))
-            }
-
-            if draftShortcut.kind == .keyCombo {
-                Picker("Key", selection: keyCodeBinding) {
-                    ForEach(CaptureShortcut.availableKeys) { option in
-                        Text(option.title).tag(option.keyCode)
+            SettingsRow(
+                title: ShortcutFeatureCopy.addToContextName,
+                subtitle: appState.captureShortcut.displayString
+            ) {
+                SettingsChangeButton(isEditingAddToContext ? "Done" : "Change") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isEditingAddToContext.toggle()
                     }
                 }
             }
 
-            Button("Reset Add To Context To Default") {
-                draftShortcut = .defaultValue
-            }
+            if isEditingAddToContext {
+                SettingsRowDivider()
 
-            Text("Default is Double Option. If double-modifier detection feels unreliable on your machine, switch Add To Context to a held modifier combo or a key combination.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                SettingsInsetContent {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SettingsFootnote(ShortcutFeatureCopy.openChatSummary)
+                        SettingsFootnote(ShortcutFeatureCopy.addToContextSummary)
+
+                        SettingsFieldGroup(label: "Shortcut Type") {
+                            Picker("Shortcut Type", selection: $draftShortcut.kind) {
+                                ForEach(CaptureShortcut.Kind.allCases) { kind in
+                                    Text(kind.title).tag(kind)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+
+                        if draftShortcut.kind == .doubleModifier {
+                            SettingsFieldGroup(label: "Modifier") {
+                                Picker("Modifier", selection: doubleModifierRawValueBinding) {
+                                    ForEach(CaptureShortcut.doubleModifierOptions, id: \.rawValue) { modifier in
+                                        Text(modifierTitle(for: modifier)).tag(modifier.rawValue)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle("Shift", isOn: modifierBinding(.shift))
+                                Toggle("Option", isOn: modifierBinding(.option))
+                                Toggle("Control", isOn: modifierBinding(.control))
+                                Toggle("Command", isOn: modifierBinding(.command))
+                            }
+                        }
+
+                        if draftShortcut.kind == .keyCombo {
+                            SettingsFieldGroup(label: "Key") {
+                                Picker("Key", selection: keyCodeBinding) {
+                                    ForEach(CaptureShortcut.availableKeys) { option in
+                                        Text(option.title).tag(option.keyCode)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                        }
+
+                        SettingsChangeButton("Reset to Default") {
+                            draftShortcut = .defaultValue
+                        }
+
+                        SettingsFootnote("Default is Double Option. If double-modifier detection feels unreliable on your machine, switch Add To Context to a held modifier combo or a key combination.")
+                    }
+                }
+            }
         }
         .onAppear {
             draftShortcut = appState.captureShortcut

@@ -11,7 +11,6 @@ final class PermissionManager {
     static let shared = PermissionManager()
 
     private enum UserDefaultsKey {
-        static let hasPromptedForAccessibilityPermission = "has-prompted-for-accessibility-permission"
         static let lastVerifiedScreenCaptureFingerprint = "last-verified-screen-capture-fingerprint"
     }
 
@@ -32,6 +31,11 @@ final class PermissionManager {
     /// Cheap read for UI. Does not call ScreenCaptureKit.
     func hasScreenCapturePermission() -> Bool {
         screenCaptureGranted || CGPreflightScreenCaptureAccess()
+    }
+
+    /// ScreenCaptureKit shareable content for capture flows. Uses the same API as permission verification.
+    func fetchShareableContent(onScreenWindowsOnly: Bool = true) async throws -> SCShareableContent {
+        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: onScreenWindowsOnly)
     }
 
     /// Authoritative ScreenCaptureKit check. Coalesced — concurrent callers share one request.
@@ -56,11 +60,12 @@ final class PermissionManager {
             defer { self.sckVerificationTask = nil }
 
             do {
-                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                _ = try await self.fetchShareableContent(onScreenWindowsOnly: false)
                 self.markScreenCaptureGranted()
                 print("[PermissionManager] verifyScreenCaptureAccess: granted (bundle=\(Bundle.main.bundleIdentifier ?? "?") path=\(self.runningApplicationPath))")
                 return true
             } catch {
+                self.lastSCKVerificationAt = Date()
                 let nsError = error as NSError
                 print("[PermissionManager] verifyScreenCaptureAccess: denied — domain=\(nsError.domain) code=\(nsError.code) (\(error.localizedDescription)) path=\(self.runningApplicationPath)")
 
@@ -199,9 +204,17 @@ final class PermissionManager {
     var hasStaleScreenCaptureGrant: Bool {
         guard isLikelyEligibleForScreenCaptureGrant else { return false }
         guard !hasScreenCapturePermission() else { return false }
-        let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
+        guard let stored = UserDefaults.standard.string(forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint) else {
+            return false
+        }
+
         let current = executableFingerprint()
-        return stored != nil && stored != current
+        if CodeSigningDiagnostics.fingerprintsMatch(stored, current) {
+            migrateStoredScreenCaptureFingerprintIfNeeded(from: stored, to: current)
+            return false
+        }
+
+        return true
     }
 
     var unsignedBuildHint: String {
@@ -242,47 +255,12 @@ final class PermissionManager {
     // MARK: - Accessibility
 
     func hasAccessibilityPermission() -> Bool {
-        AXIsProcessTrusted()
+        AccessibilityClient.isProcessTrusted()
     }
 
     /// True when Accessibility is granted and Cue can query at least one other running app's AX tree.
     func canReadOtherApplicationsAccessibilityTree() -> Bool {
-        guard hasAccessibilityPermission() else { return false }
-
-        for app in NSWorkspace.shared.runningApplications {
-            guard app.activationPolicy == .regular,
-                  let bundleID = app.bundleIdentifier,
-                  bundleID != Bundle.main.bundleIdentifier else {
-                continue
-            }
-
-            let appElement = AXUIElementCreateApplication(app.processIdentifier)
-            var windowsRef: CFTypeRef?
-            let error = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-            if error == .success {
-                return true
-            }
-        }
-
-        return true
-    }
-
-    func ensureAccessibilityPermission(promptIfNeeded: Bool) -> Bool {
-        if hasAccessibilityPermission() {
-            return true
-        }
-
-        guard promptIfNeeded else {
-            return false
-        }
-
-        guard !UserDefaults.standard.bool(forKey: UserDefaultsKey.hasPromptedForAccessibilityPermission) else {
-            return false
-        }
-
-        UserDefaults.standard.set(true, forKey: UserDefaultsKey.hasPromptedForAccessibilityPermission)
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        AccessibilityClient.canQueryOtherApplicationsTree()
     }
 
     func requestAccessibilityPermission() {
@@ -292,8 +270,7 @@ final class PermissionManager {
             return
         }
 
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
+        if !AccessibilityClient.isProcessTrusted(prompt: true) {
             openAccessibilitySettings()
         }
     }
@@ -316,58 +293,22 @@ final class PermissionManager {
         return false
     }
 
-    enum CodeSigningStatus: Equatable {
-        case signed(teamID: String)
-        case unsigned
-    }
+    typealias CodeSigningStatus = CodeSigningDiagnostics.Status
 
     func codeSigningStatus() -> CodeSigningStatus {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["-dv", "--verbose=2", runningApplicationPath]
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return .unsigned
-        }
-
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        if output.contains("Signature=adhoc") {
-            return .unsigned
-        }
-
-        for line in output.split(separator: "\n") {
-            guard line.contains("TeamIdentifier=") else { continue }
-            let teamID = line.split(separator: "=", maxSplits: 1).last?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !teamID.isEmpty {
-                return .signed(teamID: teamID)
-            }
-        }
-
-        return .unsigned
+        CodeSigningDiagnostics.status(forBundleAt: runningApplicationPath)
     }
 
     func executableFingerprint() -> String {
-        let dylibPath = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/Cue.debug.dylib")
-            .path
-        if FileManager.default.fileExists(atPath: dylibPath) {
-            return "dylib:\(codesignLine(from: dylibPath, prefix: "CDHash=") ?? dylibPath)"
-        }
-        return codesignLine(from: runningApplicationPath, prefix: "CDHash=") ?? runningApplicationPath
+        CodeSigningDiagnostics.fingerprint(forBundleAt: runningApplicationPath)
     }
 
     func permissionDiagnosticsSummary() -> String {
         let ax = hasAccessibilityPermission()
+        let axLive = AccessibilityClient.canCreateListenOnlyEventTap()
         let sr = hasScreenCapturePermission()
         let preflight = CGPreflightScreenCaptureAccess()
-        return "AX=\(ax) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
+        return "AX=\(ax) AXLive=\(axLive) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
     }
 
     // MARK: - Private
@@ -378,27 +319,9 @@ final class PermissionManager {
         UserDefaults.standard.set(executableFingerprint(), forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
     }
 
-    private func codesignLine(from path: String, prefix: String) -> String? {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["-dvvv", path]
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return nil
-        }
-
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in output.split(separator: "\n") {
-            guard line.contains(prefix) else { continue }
-            return line.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return nil
+    private func migrateStoredScreenCaptureFingerprintIfNeeded(from stored: String, to current: String) {
+        guard stored != current else { return }
+        UserDefaults.standard.set(current, forKey: UserDefaultsKey.lastVerifiedScreenCaptureFingerprint)
     }
 
     private func openSystemPrivacySettings(pane: String) {
