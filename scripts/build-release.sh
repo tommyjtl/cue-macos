@@ -22,6 +22,7 @@ xcodebuild \
   -configuration Release \
   -derivedDataPath "$BUILD_DIR/DerivedData" \
   -archivePath "$ARCHIVE_PATH" \
+  MACOSX_DEPLOYMENT_TARGET=15.5 \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGN_IDENTITY=- \
   archive

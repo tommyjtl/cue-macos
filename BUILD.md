@@ -12,8 +12,8 @@ The app is a menu-bar utility (no Dock icon). Use the text-cursor icon in the me
 
 ### macOS
 
-- macOS **15.6+** (see `MACOSX_DEPLOYMENT_TARGET` in the Xcode project)
-- Xcode **26+** to build from source
+- macOS **15.5+** (see `MACOSX_DEPLOYMENT_TARGET` in `Config/Shared.xcconfig`)
+- Xcode **16+** to build from source
 
 ### Local mode (Ollama)
 

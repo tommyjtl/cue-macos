@@ -5,3 +5,4 @@
 #include? "Local.xcconfig"
 
 CODE_SIGN_STYLE = Automatic
+MACOSX_DEPLOYMENT_TARGET = 15.5
