@@ -61,10 +61,6 @@ final class SelectedTextManager {
             throw SelectionError.accessibilityPermissionRequired
         }
 
-        if !permissionManager.canReadOtherApplicationsAccessibilityTree() {
-            log("Cross-app Accessibility looks limited — will try copy fallback for browsers.", mode: loggingMode)
-        }
-
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         log(
             "Frontmost app: \(frontmostApplication?.localizedName ?? "unknown") bundleID=\(frontmostApplication?.bundleIdentifier ?? "unknown")",
@@ -104,7 +100,7 @@ final class SelectedTextManager {
             )
 
             if let selectedText = selectedText(from: element, loggingMode: loggingMode) {
-                log("Selected text detected via AX (\(selectedText.count) chars).", mode: loggingMode)
+                log("Selected text detected (\(selectedText.count) chars).", mode: loggingMode)
                 return SelectionSnapshot(
                     createdAt: Date(),
                     text: selectedText,
@@ -114,41 +110,6 @@ final class SelectedTextManager {
                     subrole: subrole
                 )
             }
-        }
-
-        if let focusedWindow = focusedWindowElement(
-            frontmostApplication: frontmostApplication,
-            loggingMode: loggingMode
-        ),
-           let descendantMatch = searchSelectedTextInDescendants(
-               of: focusedWindow,
-               loggingMode: loggingMode
-           ) {
-            log("Selected text detected via AX descendant search (\(descendantMatch.text.count) chars).", mode: loggingMode)
-            return SelectionSnapshot(
-                createdAt: Date(),
-                text: descendantMatch.text,
-                appName: frontmostApplication?.localizedName,
-                bundleIdentifier: frontmostApplication?.bundleIdentifier,
-                role: descendantMatch.role,
-                subrole: descendantMatch.subrole
-            )
-        }
-
-        if let clipboardText = copySelectionViaClipboard(
-            frontmostApplication: frontmostApplication,
-            candidateElements: candidateElements,
-            loggingMode: loggingMode
-        ) {
-            log("Selected text detected via copy fallback (\(clipboardText.count) chars).", mode: loggingMode)
-            return SelectionSnapshot(
-                createdAt: Date(),
-                text: clipboardText,
-                appName: frontmostApplication?.localizedName,
-                bundleIdentifier: frontmostApplication?.bundleIdentifier,
-                role: "Clipboard",
-                subrole: "copy-fallback"
-            )
         }
 
         let primaryElement = candidateElements[0]
@@ -243,198 +204,6 @@ final class SelectedTextManager {
         }
 
         return candidates
-    }
-
-    private func focusedWindowElement(
-        frontmostApplication: NSRunningApplication?,
-        loggingMode: LoggingMode
-    ) -> AXUIElement? {
-        guard let pid = frontmostApplication?.processIdentifier else {
-            return nil
-        }
-
-        let appElement = AXUIElementCreateApplication(pid)
-        return copyAXElementAttribute(
-            appElement,
-            attribute: kAXFocusedWindowAttribute as CFString,
-            loggingMode: loggingMode
-        )
-    }
-
-    private struct DescendantSelectionMatch {
-        let text: String
-        let role: String?
-        let subrole: String?
-    }
-
-    private func searchSelectedTextInDescendants(
-        of root: AXUIElement,
-        loggingMode: LoggingMode,
-        maxDepth: Int = 12,
-        maxNodes: Int = 500
-    ) -> DescendantSelectionMatch? {
-        var queue: [(AXUIElement, Int)] = [(root, 0)]
-        var visited = Set<ObjectIdentifier>()
-        var nodeCount = 0
-
-        while !queue.isEmpty, nodeCount < maxNodes {
-            let (element, depth) = queue.removeFirst()
-            let key = ObjectIdentifier(element as AnyObject)
-            guard visited.insert(key).inserted else { continue }
-            nodeCount += 1
-
-            if let text = selectedText(from: element, loggingMode: loggingMode) {
-                let role = copyStringAttribute(
-                    element,
-                    attribute: kAXRoleAttribute as CFString,
-                    loggingMode: loggingMode,
-                    logExpectedFailure: false
-                )
-                let subrole = copyStringAttribute(
-                    element,
-                    attribute: kAXSubroleAttribute as CFString,
-                    loggingMode: loggingMode,
-                    logExpectedFailure: false
-                )
-                return DescendantSelectionMatch(text: text, role: role, subrole: subrole)
-            }
-
-            guard depth < maxDepth else { continue }
-
-            for child in childElements(of: element, loggingMode: loggingMode) {
-                queue.append((child, depth + 1))
-            }
-        }
-
-        return nil
-    }
-
-    private func childElements(of element: AXUIElement, loggingMode: LoggingMode) -> [AXUIElement] {
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
-        guard error == .success, let value else {
-            return []
-        }
-
-        if CFGetTypeID(value) == AXUIElementGetTypeID() {
-            return [unsafeBitCast(value, to: AXUIElement.self)]
-        }
-
-        guard CFGetTypeID(value) == CFArrayGetTypeID() else {
-            return []
-        }
-
-        let array = value as! CFArray
-        var children: [AXUIElement] = []
-        children.reserveCapacity(CFArrayGetCount(array))
-
-        for index in 0 ..< CFArrayGetCount(array) {
-            guard let childValue = CFArrayGetValueAtIndex(array, index) else { continue }
-            let child = Unmanaged<CFTypeRef>.fromOpaque(childValue).takeUnretainedValue()
-            guard CFGetTypeID(child) == AXUIElementGetTypeID() else { continue }
-            children.append(unsafeBitCast(child, to: AXUIElement.self))
-        }
-
-        return children
-    }
-
-    private func copySelectionViaClipboard(
-        frontmostApplication: NSRunningApplication?,
-        candidateElements: [AXUIElement],
-        loggingMode: LoggingMode
-    ) -> String? {
-        guard let frontmostApplication,
-              frontmostApplication.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            return nil
-        }
-
-        let pasteboard = NSPasteboard.general
-        let previousChangeCount = pasteboard.changeCount
-        let previousString = pasteboard.string(forType: .string)
-
-        for element in candidateElements.prefix(5) {
-            let copyError = AXUIElementPerformAction(element, "AXCopy" as CFString)
-            if copyError == .success {
-                log("AX copy action succeeded on focused candidate.", mode: loggingMode, minimumMode: .verbose)
-                if let copied = waitForPasteboardChange(
-                    pasteboard: pasteboard,
-                    previousChangeCount: previousChangeCount,
-                    previousString: previousString
-                ) {
-                    restorePasteboard(pasteboard, previousChangeCount: previousChangeCount, previousString: previousString)
-                    return copied
-                }
-            }
-        }
-
-        guard simulateCopyCommand() else {
-            log("Copy fallback could not post Command+C.", mode: loggingMode)
-            restorePasteboard(pasteboard, previousChangeCount: previousChangeCount, previousString: previousString)
-            return nil
-        }
-
-        guard let copied = waitForPasteboardChange(
-            pasteboard: pasteboard,
-            previousChangeCount: previousChangeCount,
-            previousString: previousString
-        ) else {
-            log("Copy fallback did not produce new clipboard text.", mode: loggingMode)
-            restorePasteboard(pasteboard, previousChangeCount: previousChangeCount, previousString: previousString)
-            return nil
-        }
-
-        restorePasteboard(pasteboard, previousChangeCount: previousChangeCount, previousString: previousString)
-        return copied
-    }
-
-    private func waitForPasteboardChange(
-        pasteboard: NSPasteboard,
-        previousChangeCount: Int,
-        previousString: String?
-    ) -> String? {
-        for _ in 0 ..< 8 {
-            usleep(25_000)
-            if pasteboard.changeCount != previousChangeCount,
-               let copied = pasteboard.string(forType: .string) {
-                let trimmed = copied.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty, trimmed != previousString?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    return trimmed
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private func restorePasteboard(
-        _ pasteboard: NSPasteboard,
-        previousChangeCount: Int,
-        previousString: String?
-    ) {
-        guard pasteboard.changeCount != previousChangeCount else { return }
-
-        pasteboard.clearContents()
-        if let previousString {
-            pasteboard.setString(previousString, forType: .string)
-        }
-    }
-
-    private func simulateCopyCommand() -> Bool {
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            return false
-        }
-
-        let keyCode = CGKeyCode(8) // ANSI C
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
-            return false
-        }
-
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return true
     }
 
     private func selectedText(from element: AXUIElement, loggingMode: LoggingMode) -> String? {
