@@ -79,7 +79,7 @@ final class ScreenCaptureManager {
     }
 
     private func captureImage(for selection: ScreenCaptureSelection) async throws -> CGImage {
-        let shareableContent = try await fetchShareableContent()
+        let shareableContent = try await permissionManager.fetchShareableContent(onScreenWindowsOnly: true)
         let selectedDisplay = try matchDisplay(for: selection, in: shareableContent.displays)
         let sourceRect = selectionRectInDisplayLocalSpace(selection.rect, display: selectedDisplay)
             .intersection(CGRect(origin: .zero, size: selectedDisplay.frame.size))
@@ -97,10 +97,6 @@ final class ScreenCaptureManager {
         configuration.showsCursor = false
 
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
-    }
-
-    private func fetchShareableContent() async throws -> SCShareableContent {
-        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
     }
 
     private func matchDisplay(for selection: ScreenCaptureSelection, in displays: [SCDisplay]) throws -> SCDisplay {
