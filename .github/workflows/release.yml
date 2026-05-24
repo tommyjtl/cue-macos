@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       generate_release_notes:
-        description: "Generate AI release notes (requires RELEASE_NOTES_API_KEY secret). If off, publishes a commit list only."
+        description: "Generate release notes"
         required: false
         type: boolean
         default: true
