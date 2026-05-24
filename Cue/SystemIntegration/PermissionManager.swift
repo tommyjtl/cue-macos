@@ -111,18 +111,84 @@ final class PermissionManager {
         lastPermissionSettingsOpenedAt = Date()
     }
 
-    /// macOS applies Accessibility and often Screen Recording only after the app process restarts.
+    /// Screen Recording usually needs a new process after granting. Accessibility often updates live.
     var needsRestartAfterPermissionChange: Bool {
         guard let lastPermissionSettingsOpenedAt else { return false }
         guard Date().timeIntervalSince(lastPermissionSettingsOpenedAt) < 600 else { return false }
-        return !hasScreenCapturePermission() || !hasAccessibilityPermission()
+        return !hasScreenCapturePermission()
+    }
+
+    enum LaunchContext: Equatable {
+        case xcodeDebug
+        case xcodeArchive
+        case installed
+        case other
+
+        static func current(for bundlePath: String) -> LaunchContext {
+            if bundlePath.contains("/DerivedData/"), bundlePath.contains("/Build/Products/") {
+                return .xcodeDebug
+            }
+            if bundlePath.contains(".xcarchive/") {
+                return .xcodeArchive
+            }
+            if bundlePath.hasPrefix("/Applications/") {
+                return .installed
+            }
+            return .other
+        }
+    }
+
+    var launchContext: LaunchContext {
+        LaunchContext.current(for: runningApplicationPath)
     }
 
     var restartAfterPermissionChangeHint: String {
-        """
-        macOS applies privacy permissions when the app next launches — toggling in System Settings does not update a running copy.
+        switch launchContext {
+        case .xcodeDebug:
+            return """
+            Screen Recording applies on the next launch from Xcode — not via System Settings' "Quit & Reopen".
 
-        Press ⌘Q to quit Cue completely, then reopen it (⌘R in Xcode or open from Applications).
+            1. Stop Cue in Xcode (⌘. or ⌘Q)
+            2. Press Run (⌘R)
+
+            Do not use System Settings' Quit & Reopen while debugging; it can relaunch the wrong copy of Cue.
+
+            Running from:
+            \(runningApplicationPath)
+            """
+        case .xcodeArchive:
+            return """
+            Quit Cue (⌘Q), then reopen this app from Finder. Do not use System Settings' Quit & Reopen.
+
+            Running from:
+            \(runningApplicationPath)
+            """
+        case .installed:
+            return """
+            Quit Cue (⌘Q), then open it again from Applications.
+
+            Running from:
+            \(runningApplicationPath)
+            """
+        case .other:
+            return """
+            Quit Cue (⌘Q), then reopen it. Do not use System Settings' Quit & Reopen.
+
+            Running from:
+            \(runningApplicationPath)
+            """
+        }
+    }
+
+    var enablePermissionsHint: String {
+        let restartNote = launchContext == .xcodeDebug
+            ? "After enabling Screen Recording, stop the app in Xcode (⌘.) and Run (⌘R) — not System Settings' Quit & Reopen."
+            : "After enabling Screen Recording, quit Cue (⌘Q) and reopen it."
+
+        return """
+        Click Enable… for each permission and turn on Cue.app in System Settings. Accessibility usually updates here immediately; Screen Recording needs a relaunch.
+
+        \(restartNote)
 
         Running from:
         \(runningApplicationPath)

@@ -273,8 +273,9 @@ private struct PermissionsSettingsSection: View {
 
             if appState.needsRestartForPermissions {
                 PermissionHelpCallout(
-                    title: "Restart Cue to apply permissions",
-                    message: permissionManager.restartAfterPermissionChangeHint
+                    title: "Relaunch Cue to apply Screen Recording",
+                    message: permissionManager.restartAfterPermissionChangeHint,
+                    showsQuitButton: true
                 )
             } else if permissionManager.hasStaleScreenCaptureGrant {
                 PermissionHelpCallout(
@@ -289,7 +290,7 @@ private struct PermissionsSettingsSection: View {
             } else if !appState.screenRecordingGranted || !appState.accessibilityGranted {
                 PermissionHelpCallout(
                     title: "Enable in System Settings",
-                    message: "Click Enable… for each permission, turn on Cue.app in System Settings, then quit Cue (⌘Q) and reopen it. macOS does not apply Accessibility to a running app until restart.\n\nRunning from:\n\(permissionManager.runningApplicationPath)"
+                    message: permissionManager.enablePermissionsHint
                 )
             }
         }
@@ -309,9 +310,9 @@ private struct PermissionsSettingsSection: View {
 
         switch item.id {
         case .screenRecording:
-            return "Enable Screen Recording for Cue.app, then restart Cue"
+            return "Enable Screen Recording for Cue.app, then relaunch Cue"
         case .accessibility:
-            return "Enable Accessibility for Cue.app, then restart Cue"
+            return "Enable Accessibility for Cue.app in System Settings"
         }
     }
 
@@ -335,9 +336,10 @@ private struct PermissionsSettingsSection: View {
 private struct PermissionHelpCallout: View {
     let title: String
     let message: String
+    var showsQuitButton = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -345,6 +347,12 @@ private struct PermissionHelpCallout: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if showsQuitButton {
+                Button("Quit Cue") {
+                    NSApp.terminate(nil)
+                }
+                .controlSize(.small)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

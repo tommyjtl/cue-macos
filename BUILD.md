@@ -35,13 +35,27 @@ The app is a menu-bar utility (no Dock icon). Use the text-cursor icon in the me
 
 Cue needs **Screen Recording** and **Accessibility** to capture screenshots and read selected text from other apps. Grant both when prompted during onboarding or in **System Settings → Privacy & Security**.
 
-**After enabling either permission, quit Cue completely (⌘Q) and reopen it.** macOS does not apply Accessibility (and sometimes Screen Recording) to an already-running process — the in-app status will stay "Not granted" until restart even if System Settings shows the toggle on.
+**After enabling Screen Recording, relaunch Cue** — Accessibility usually updates in the app immediately; Screen Recording does not.
 
-When developing in Xcode, use **Product → Clean Build Folder** sparingly. If permissions get out of sync after many rebuilds, reset them:
+| How you run Cue | What to do after toggling Screen Recording ON |
+|-----------------|-----------------------------------------------|
+| **Xcode (⌘R)** | Stop run (⌘. or ⌘Q), then **Run (⌘R)**. Do **not** use System Settings' "Quit & Reopen". |
+| **Archive / Finder** | **⌘Q**, then reopen the same app from Finder. |
+| **Applications** | **⌘Q**, then open from Applications again. |
+
+For a **stable dev install** (recommended — one TCC entry, grants survive rebuilds):
 
 ```bash
-tccutil reset ScreenCapture com.cruxbetalabs.Cue
-tccutil reset Accessibility com.cruxbetalabs.Cue
+./scripts/install-dev-app.sh   # copies Debug build → ~/Applications/Cue Dev.app
+open ~/Applications/Cue\ Dev.app
+```
+
+Grant permissions once for **Cue Dev.app**, then rebuild in Xcode and re-run `install-dev-app.sh` only when you need to refresh the installed copy.
+
+If permissions get out of sync after many rebuilds:
+
+```bash
+./scripts/reset-permissions.sh
 ```
 
 Release DMGs built without code signing cannot receive Screen Recording on macOS 15+; use a signed Xcode build or archive for testing capture.
