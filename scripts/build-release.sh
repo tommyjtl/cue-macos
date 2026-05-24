@@ -21,6 +21,8 @@ if [[ "${RELEASE_SIGN:-0}" == "1" ]]; then
   : "${DEVELOPMENT_TEAM:?DEVELOPMENT_TEAM is required when RELEASE_SIGN=1}"
   SIGN_ARGS+=(
     CODE_SIGNING_ALLOWED=YES
+    CODE_SIGN_STYLE=Manual
+    CODE_SIGN_IDENTITY="Developer ID Application"
     DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
   )
   echo "Building signed release (team $DEVELOPMENT_TEAM)"

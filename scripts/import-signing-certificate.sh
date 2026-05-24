@@ -18,8 +18,14 @@ security import "$CERTIFICATE_PATH" \
   -A \
   -t cert \
   -f pkcs12 \
-  -k "$KEYCHAIN_PATH"
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+  -k "$KEYCHAIN_PATH" \
+  >/dev/null 2>&1
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null 2>&1
 security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" || {
+  echo "error: Developer ID Application certificate not found in CI keychain" >&2
+  exit 1
+}
 
 echo "Signing certificate imported into $KEYCHAIN_PATH"
