@@ -60,3 +60,24 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode build output
+DerivedData/
+build/
+dist/
+*.xcuserstate
+
+# Local secrets / overrides
+.env
+.env.*
+*.local
+Config/Local.xcconfig
+docs/RELEASE.local.md
+
+# design
+*.psd
