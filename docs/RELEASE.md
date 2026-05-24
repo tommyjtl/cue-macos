@@ -11,25 +11,22 @@ CURRENT_PROJECT_VERSION = 2
 
 Git tags and GitHub Releases use `v$(MARKETING_VERSION)` (for example `v1.0`).
 
-## Local git hooks
+## Create a release (GitHub Actions)
 
-Install the pre-push version check:
+Releases are **manual** — they do not run on every push to `main`.
 
-```bash
-./scripts/install-git-hooks.sh
-```
+1. Bump `Config/Version.xcconfig` and push to `main`
+2. Open **[Actions → Release](https://github.com/tommyjtl/cue-macos/actions/workflows/release.yml)**
+3. Click **Run workflow**
+4. Enter the release tag (e.g. `v1.0`) — must match `MARKETING_VERSION` in `Config/Version.xcconfig`
+5. Run on branch **`main`**
 
-When pushing new commits to `main`, the hook verifies that `MARKETING_VERSION` is **ahead of** the latest release tag on `origin/main`.
+The workflow will:
 
-## Automated releases (GitHub Actions)
-
-Pushing to **`main`** triggers `.github/workflows/release.yml`:
-
-1. Reads `Config/Version.xcconfig`
-2. Skips if tag `v<version>` already exists
-3. Builds an **unsigned** `.dmg`
-4. Generates release notes (user-facing + developer-facing sections)
-5. Creates a GitHub Release and uploads the DMG
+1. Validate the tag (format, not already published, matches `Version.xcconfig`)
+2. Build an **unsigned** `.dmg`
+3. Generate release notes (user-facing + developer-facing sections)
+4. Create a GitHub Release and upload the DMG
 
 GitHub provides `GITHUB_TOKEN` automatically for creating releases.
 
@@ -55,7 +52,8 @@ Output: `dist/Cue-<version>.dmg`
 ## Release checklist
 
 1. Bump `Config/Version.xcconfig`
-2. Merge or push to `main`
-3. Confirm GitHub Actions **Release** workflow succeeded
-4. Verify the release page and DMG on GitHub
-5. Smoke-test install on a clean Mac
+2. Push to `main`
+3. Run the **Release** workflow with the matching tag (e.g. `v1.1`)
+4. Confirm the workflow succeeded
+5. Verify the release page and DMG on GitHub
+6. Smoke-test install on a clean Mac

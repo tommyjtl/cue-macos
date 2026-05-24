@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Releases are created manually from GitHub Actions (workflow_dispatch).
+# No pre-push checks.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-while read -r local_ref local_sha remote_ref remote_sha; do
-  if [[ "$remote_ref" == "refs/heads/main" ]]; then
-    "$ROOT/scripts/check-version-ahead.sh" origin
-  fi
-done
+exit 0
