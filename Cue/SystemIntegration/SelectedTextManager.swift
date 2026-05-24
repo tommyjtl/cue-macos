@@ -52,7 +52,10 @@ final class SelectedTextManager {
     ) throws -> SelectionSnapshot {
         log("Starting selected-text detection.", mode: loggingMode, minimumMode: .verbose)
 
-        guard permissionManager.ensureAccessibilityPermission(promptIfNeeded: promptForPermission) else {
+        guard permissionManager.hasAccessibilityPermission() else {
+            if promptForPermission {
+                permissionManager.requestAccessibilityPermission()
+            }
             log("Accessibility permission is not currently granted.", mode: loggingMode)
             throw SelectionError.accessibilityPermissionRequired
         }

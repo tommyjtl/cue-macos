@@ -199,14 +199,20 @@ final class HotkeyManager {
         self.shortcut = shortcut.normalized
     }
 
+    /// Global monitors require Accessibility. Call when permission is granted after launch.
+    func refreshAccessibilityDependentMonitors() {
+        if permissionManager.hasAccessibilityPermission() {
+            installGlobalMonitorsIfNeeded()
+        } else {
+            removeGlobalMonitors()
+            print("[HotkeyManager] Accessibility not granted — global shortcuts (double Shift/Option) inactive")
+        }
+    }
+
     private func installMonitors() {
         localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChanged(event)
             return event
-        }
-
-        globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            self?.handleFlagsChanged(event)
         }
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -214,12 +220,42 @@ final class HotkeyManager {
             return event
         }
 
-        guard permissionManager.ensureAccessibilityPermission(promptIfNeeded: true) else {
+        installGlobalMonitorsIfNeeded()
+    }
+
+    private func installGlobalMonitorsIfNeeded() {
+        guard permissionManager.hasAccessibilityPermission() else {
+            print("[HotkeyManager] Skipping global monitors — Accessibility not granted yet")
             return
         }
 
-        globalKeyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleGlobalKeyDown(event)
+        if globalFlagsMonitor == nil {
+            globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.handleFlagsChanged(event)
+            }
+        }
+
+        if globalKeyDownMonitor == nil {
+            globalKeyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handleGlobalKeyDown(event)
+            }
+        }
+
+        if globalFlagsMonitor != nil {
+            print("[HotkeyManager] Global shortcut monitors active")
+        } else {
+            print("[HotkeyManager] Failed to install global monitors — check Accessibility permission")
+        }
+    }
+
+    private func removeGlobalMonitors() {
+        if let globalFlagsMonitor {
+            NSEvent.removeMonitor(globalFlagsMonitor)
+            self.globalFlagsMonitor = nil
+        }
+        if let globalKeyDownMonitor {
+            NSEvent.removeMonitor(globalKeyDownMonitor)
+            self.globalKeyDownMonitor = nil
         }
     }
 
@@ -227,15 +263,10 @@ final class HotkeyManager {
         if let localFlagsMonitor {
             NSEvent.removeMonitor(localFlagsMonitor)
         }
-        if let globalFlagsMonitor {
-            NSEvent.removeMonitor(globalFlagsMonitor)
-        }
         if let localKeyDownMonitor {
             NSEvent.removeMonitor(localKeyDownMonitor)
         }
-        if let globalKeyDownMonitor {
-            NSEvent.removeMonitor(globalKeyDownMonitor)
-        }
+        removeGlobalMonitors()
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {

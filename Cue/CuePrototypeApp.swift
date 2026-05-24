@@ -280,6 +280,8 @@ final class AppModel {
         screenRecordingGranted = newSR
         accessibilityGranted = newAX
         needsRestartForPermissions = newRestart
+
+        hotkeyManager?.refreshAccessibilityDependentMonitors()
     }
 
     private static func axPermissionNotificationStream() -> AsyncStream<Void> {
