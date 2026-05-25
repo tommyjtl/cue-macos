@@ -453,8 +453,9 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     nonisolated static func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
-        event.keyCode == 53
-            && event.modifierFlags.intersection(CaptureShortcut.modifierFlagsMask).isEmpty
+        let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        return event.keyCode == 53
+            && event.modifierFlags.intersection(modifierFlagsMask).isEmpty
     }
 
     private func isEscapeKeyEvent(_ event: NSEvent) -> Bool {

@@ -1,6 +1,13 @@
 import AppKit
 import Foundation
 
+private enum DoubleCopyConfig {
+    nonisolated static let copyKeyCode: UInt16 = 8
+    nonisolated static let maxIntervalBetweenCopies: CFTimeInterval = 0.5
+    static let pasteboardReadDelay: Duration = .milliseconds(100)
+    static let pasteboardPollInterval: Duration = .milliseconds(250)
+}
+
 /// Attaches clipboard text to context when the user copies twice in quick succession.
 /// Signals come from ⌘C key events and/or pasteboard changeCount updates (covers right-click Copy).
 @MainActor
@@ -32,13 +39,6 @@ final class ClipboardMonitor {
 
             return parts.joined(separator: " ")
         }
-    }
-
-    private enum DoubleCopyConfig {
-        static let copyKeyCode: UInt16 = 8
-        static let maxIntervalBetweenCopies: CFTimeInterval = 0.5
-        static let pasteboardReadDelay: Duration = .milliseconds(100)
-        static let pasteboardPollInterval: Duration = .milliseconds(250)
     }
 
     private let permissionManager = PermissionManager.shared
@@ -247,7 +247,7 @@ final class ClipboardMonitor {
         pasteboardWatchTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: DoubleCopyConfig.pasteboardPollInterval)
-                await self?.checkPasteboardForChanges()
+                self?.checkPasteboardForChanges()
             }
         }
     }

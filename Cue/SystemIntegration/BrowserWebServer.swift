@@ -8,11 +8,25 @@ import Foundation
 /// NWListener. NWListener makes an NECP port reservation on start() that can linger
 /// after failure, causing persistent "Address already in use" loops on app restart.
 /// POSIX sockets bypass NECP entirely and behave correctly across debug cycles.
-private struct BrowserPushPayload: Decodable, Sendable {
+private struct BrowserPushPayload: Sendable {
     let url: String
     let title: String
     let text: String
     let browser: String
+}
+
+extension BrowserPushPayload: Decodable {
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+        title = try container.decode(String.self, forKey: .title)
+        text = try container.decode(String.self, forKey: .text)
+        browser = try container.decode(String.self, forKey: .browser)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case url, title, text, browser
+    }
 }
 
 enum BrowserPagePushResult: Sendable {
