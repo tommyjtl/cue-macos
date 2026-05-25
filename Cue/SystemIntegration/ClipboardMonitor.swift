@@ -1,36 +1,83 @@
 import AppKit
 import Foundation
 
-/// Attaches clipboard text to context when the user presses ⌘C twice in quick succession.
+/// Attaches clipboard text to context when the user copies twice in quick succession.
+/// Signals come from ⌘C key events and/or pasteboard changeCount updates (covers right-click Copy).
 @MainActor
 final class ClipboardMonitor {
     typealias Handler = @MainActor (_ text: String, _ sourceApp: NSRunningApplication?) -> Void
+    typealias DebugLogHandler = @MainActor (_ message: String) -> Void
+
+    struct PasteboardDiagnostic: Equatable {
+        let changeCount: Int
+        let typeLabels: [String]
+        let plainTextPreview: String?
+        let readFailureReason: String?
+
+        var logSummary: String {
+            var parts = ["changeCount=\(changeCount)"]
+
+            if typeLabels.isEmpty {
+                parts.append("types=(none)")
+            } else {
+                parts.append("types=[\(typeLabels.joined(separator: ", "))]")
+            }
+
+            if let plainTextPreview {
+                parts.append("text=\(plainTextPreview)")
+            } else if let readFailureReason {
+                parts.append("text=(unreadable: \(readFailureReason))")
+            }
+
+            return parts.joined(separator: " ")
+        }
+    }
 
     private enum DoubleCopyConfig {
         static let copyKeyCode: UInt16 = 8
         static let maxIntervalBetweenCopies: CFTimeInterval = 0.5
+        static let pasteboardReadDelay: Duration = .milliseconds(100)
+        static let pasteboardPollInterval: Duration = .milliseconds(250)
     }
 
     private let permissionManager = PermissionManager.shared
     private var globalCopyMonitor: Any?
     private var localCopyMonitor: Any?
-    private var lastCopyKeyDownAt: CFTimeInterval?
+    private var pasteboardWatchTask: Task<Void, Never>?
+    private var lastCopySignalAt: CFTimeInterval?
+    private var lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
+    private var lastLoggedMonitorStatus: String?
     private var onAttachFromClipboard: Handler?
+    private var onDebugLog: DebugLogHandler?
 
     nonisolated(unsafe) private static var ignoreCopyShortcutUntil: Date?
 
-    func start(onAttachFromClipboard: @escaping Handler) {
+    nonisolated static let plainTextTypeCandidates: [NSPasteboard.PasteboardType] = [
+        .string,
+        NSPasteboard.PasteboardType("public.utf8-plain-text"),
+        NSPasteboard.PasteboardType("public.plain-text"),
+        NSPasteboard.PasteboardType("NSStringPboardType")
+    ]
+
+    func start(onAttachFromClipboard: @escaping Handler, onDebugLog: DebugLogHandler? = nil) {
         guard self.onAttachFromClipboard == nil else { return }
 
         self.onAttachFromClipboard = onAttachFromClipboard
+        self.onDebugLog = onDebugLog
+        lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
         installCopyMonitors()
-        print("[ClipboardMonitor] Started — attach on double ⌘C")
+        startPasteboardWatchLoop()
+        logMonitorStatus(prefix: "Started", force: true)
+        print("[ClipboardMonitor] Started — attach on double copy (⌘C or pasteboard change)")
     }
 
     func stop() {
+        pasteboardWatchTask?.cancel()
+        pasteboardWatchTask = nil
         removeCopyMonitors()
         onAttachFromClipboard = nil
-        lastCopyKeyDownAt = nil
+        onDebugLog = nil
+        lastCopySignalAt = nil
     }
 
     func refreshAccessibilityDependentMonitors() {
@@ -38,25 +85,79 @@ final class ClipboardMonitor {
             installGlobalCopyMonitorIfNeeded()
         } else {
             removeGlobalCopyMonitor()
-            print("[ClipboardMonitor] Accessibility not granted — double ⌘C works only while Cue is focused")
+            logDebug("Accessibility not granted — ⌘C detection works only while Cue is focused; pasteboard watching stays active")
+            print("[ClipboardMonitor] Accessibility not granted — ⌘C detection works only while Cue is focused")
         }
+
+        logMonitorStatus(prefix: "Monitors refreshed")
     }
 
     nonisolated static func temporarilyIgnoreCopyShortcut(for interval: TimeInterval = 0.35) {
         ignoreCopyShortcutUntil = Date().addingTimeInterval(interval)
     }
 
+    nonisolated static func isCopyKeyDown(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command) else { return false }
+        guard !event.modifierFlags.contains(.option) else { return false }
+        guard !event.isARepeat else { return false }
+
+        if event.keyCode == DoubleCopyConfig.copyKeyCode {
+            return true
+        }
+
+        return event.charactersIgnoringModifiers?.lowercased() == "c"
+    }
+
     nonisolated static func readString(from pasteboard: NSPasteboard) -> String? {
-        guard pasteboard.availableType(from: [.string]) == .string else {
-            return nil
+        for type in plainTextTypeCandidates {
+            guard pasteboard.availableType(from: [type]) == type,
+                  let value = pasteboard.string(forType: type) else {
+                continue
+            }
+
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
         }
 
-        guard let value = pasteboard.string(forType: .string) else {
-            return nil
+        return nil
+    }
+
+    nonisolated static func diagnosePasteboard(_ pasteboard: NSPasteboard = .general) -> PasteboardDiagnostic {
+        let typeLabels = pasteboard.types?.map(\.rawValue) ?? []
+
+        if typeLabels.contains(where: { isConcealedType(NSPasteboard.PasteboardType($0)) }) {
+            return PasteboardDiagnostic(
+                changeCount: pasteboard.changeCount,
+                typeLabels: typeLabels,
+                plainTextPreview: nil,
+                readFailureReason: "concealed pasteboard content"
+            )
         }
 
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        if let text = readString(from: pasteboard) {
+            return PasteboardDiagnostic(
+                changeCount: pasteboard.changeCount,
+                typeLabels: typeLabels,
+                plainTextPreview: preview(text),
+                readFailureReason: nil
+            )
+        }
+
+        let readFailureReason: String
+        if typeLabels.isEmpty {
+            readFailureReason = "pasteboard is empty"
+        } else {
+            readFailureReason = "no supported plain-text type"
+        }
+
+        return PasteboardDiagnostic(
+            changeCount: pasteboard.changeCount,
+            typeLabels: typeLabels,
+            plainTextPreview: nil,
+            readFailureReason: readFailureReason
+        )
     }
 
     nonisolated static func describe(_ text: String?) -> String {
@@ -69,13 +170,13 @@ final class ClipboardMonitor {
         return String(text.prefix(limit)) + "…"
     }
 
-    nonisolated static func shouldAttachAfterCopyKeyPress(
-        lastCopyKeyDownAt: CFTimeInterval?,
+    nonisolated static func shouldAttachAfterCopySignal(
+        lastCopySignalAt: CFTimeInterval?,
         now: CFTimeInterval,
         maxIntervalBetweenCopies: CFTimeInterval = DoubleCopyConfig.maxIntervalBetweenCopies
-    ) -> (nextLastCopyKeyDownAt: CFTimeInterval?, shouldAttach: Bool) {
-        if let lastCopyKeyDownAt,
-           now - lastCopyKeyDownAt <= maxIntervalBetweenCopies {
+    ) -> (nextLastCopySignalAt: CFTimeInterval?, shouldAttach: Bool) {
+        if let lastCopySignalAt,
+           now - lastCopySignalAt <= maxIntervalBetweenCopies {
             return (nil, true)
         }
 
@@ -85,7 +186,9 @@ final class ClipboardMonitor {
     private func installCopyMonitors() {
         if localCopyMonitor == nil {
             localCopyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                self?.handleCopyKeyDown(event)
+                Task { @MainActor in
+                    self?.handleCopyKeyDown(event, monitor: "local")
+                }
                 return event
             }
         }
@@ -98,11 +201,16 @@ final class ClipboardMonitor {
         guard globalCopyMonitor == nil else { return }
 
         globalCopyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleCopyKeyDown(event)
+            Task { @MainActor in
+                self?.handleCopyKeyDown(event, monitor: "global")
+            }
         }
 
         if globalCopyMonitor != nil {
-            print("[ClipboardMonitor] Global double-⌘C monitor active")
+            print("[ClipboardMonitor] Global ⌘C monitor active")
+        } else {
+            logDebug("Failed to install global ⌘C monitor — pasteboard watching still active")
+            print("[ClipboardMonitor] Failed to install global ⌘C monitor")
         }
     }
 
@@ -121,42 +229,101 @@ final class ClipboardMonitor {
         removeGlobalCopyMonitor()
     }
 
-    private func handleCopyKeyDown(_ event: NSEvent) {
-        guard !Self.shouldIgnoreCopyShortcut() else { return }
-        guard event.keyCode == DoubleCopyConfig.copyKeyCode else { return }
-        guard event.modifierFlags.contains(.command) else { return }
-        guard !event.modifierFlags.contains(.option) else { return }
-        guard !event.isARepeat else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let decision = Self.shouldAttachAfterCopyKeyPress(lastCopyKeyDownAt: lastCopyKeyDownAt, now: now)
-        lastCopyKeyDownAt = decision.nextLastCopyKeyDownAt
-
-        if decision.shouldAttach {
-            attachMostRecentClipboardText()
-        } else {
-            print("[ClipboardMonitor] First ⌘C — press ⌘C again to attach clipboard to context")
+    private func startPasteboardWatchLoop() {
+        pasteboardWatchTask?.cancel()
+        pasteboardWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: DoubleCopyConfig.pasteboardPollInterval)
+                await self?.checkPasteboardForChanges()
+            }
         }
     }
 
-    private func attachMostRecentClipboardText() {
-        let pasteboard = NSPasteboard.general
+    private func checkPasteboardForChanges() {
+        guard !Task.isCancelled else { return }
 
-        if pasteboard.types?.contains(where: Self.isConcealedType) == true {
-            print("[ClipboardMonitor] Double ⌘C — concealed pasteboard content, skipping")
+        let pasteboard = NSPasteboard.general
+        let changeCount = pasteboard.changeCount
+        guard changeCount != lastObservedPasteboardChangeCount else { return }
+
+        lastObservedPasteboardChangeCount = changeCount
+        guard !Self.shouldIgnoreCopyShortcut() else { return }
+
+        let diagnostic = Self.diagnosePasteboard(pasteboard)
+        handleCopySignal(source: "pasteboard", monitor: nil, diagnostic: diagnostic)
+    }
+
+    private func handleCopyKeyDown(_ event: NSEvent, monitor: String) {
+        guard Self.isCopyKeyDown(event) else { return }
+
+        let diagnostic = Self.diagnosePasteboard()
+        handleCopySignal(source: "⌘C", monitor: monitor, diagnostic: diagnostic)
+    }
+
+    private func handleCopySignal(source: String, monitor: String?, diagnostic: PasteboardDiagnostic) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let decision = Self.shouldAttachAfterCopySignal(lastCopySignalAt: lastCopySignalAt, now: now)
+        lastCopySignalAt = decision.nextLastCopySignalAt
+
+        let frontmostApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
+        let viaMonitor = monitor.map { " via \($0) monitor" } ?? ""
+
+        if decision.shouldAttach {
+            logDebug("Second copy signal from \(source)\(viaMonitor) in \(frontmostApp) — attaching")
+            print("[ClipboardMonitor] Second copy signal — attaching")
+            Task { @MainActor in
+                try? await Task.sleep(for: DoubleCopyConfig.pasteboardReadDelay)
+                attachMostRecentClipboardText(sourceLabel: source, frontmostAppName: frontmostApp)
+            }
             return
         }
 
-        guard let text = Self.readString(from: pasteboard) else {
-            print("[ClipboardMonitor] Double ⌘C — no plain-text content on pasteboard")
+        logDebug("First copy signal from \(source)\(viaMonitor) in \(frontmostApp) — copy again within 0.5s to attach")
+        print("[ClipboardMonitor] First copy signal — copy again to attach")
+
+        Task { @MainActor in
+            try? await Task.sleep(for: DoubleCopyConfig.pasteboardReadDelay)
+            let refreshed = Self.diagnosePasteboard()
+            logDebug("Clipboard snapshot after first copy: \(refreshed.logSummary)")
+        }
+    }
+
+    private func attachMostRecentClipboardText(sourceLabel: String, frontmostAppName: String) {
+        let diagnostic = Self.diagnosePasteboard()
+
+        if diagnostic.readFailureReason == "concealed pasteboard content" {
+            logDebug("Attach from \(sourceLabel) in \(frontmostAppName) skipped concealed pasteboard content")
+            print("[ClipboardMonitor] Attach skipped concealed pasteboard content")
+            return
+        }
+
+        guard let text = Self.readString(from: .general) else {
+            logDebug("Attach from \(sourceLabel) in \(frontmostAppName) found no readable text — \(diagnostic.logSummary)")
+            print("[ClipboardMonitor] Attach failed — no plain-text content on pasteboard")
             return
         }
 
         let sourceApp = NSWorkspace.shared.frontmostApplication
+        logDebug("Attached \(Self.describe(text)) from \(sourceApp?.localizedName ?? frontmostAppName)")
         print(
-            "[ClipboardMonitor] Double ⌘C — attaching \(Self.describe(text)) from \(sourceApp?.localizedName ?? "unknown")"
+            "[ClipboardMonitor] Attached \(Self.describe(text)) from \(sourceApp?.localizedName ?? "unknown")"
         )
         onAttachFromClipboard?(text, sourceApp)
+    }
+
+    private func monitorStatusMessage(prefix: String) -> String {
+        "\(prefix) — local monitor=\(localCopyMonitor != nil), global monitor=\(globalCopyMonitor != nil), pasteboard watch=active, accessibility=\(permissionManager.hasAccessibilityPermission())"
+    }
+
+    private func logMonitorStatus(prefix: String, force: Bool = false) {
+        let message = monitorStatusMessage(prefix: prefix)
+        guard force || message != lastLoggedMonitorStatus else { return }
+        lastLoggedMonitorStatus = message
+        logDebug(message)
+    }
+
+    private func logDebug(_ message: String) {
+        onDebugLog?(message)
     }
 
     nonisolated private static func isConcealedType(_ type: NSPasteboard.PasteboardType) -> Bool {

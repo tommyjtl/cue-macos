@@ -18,6 +18,7 @@ final class AppModel {
             case screenshotCapture = "Screenshot Capture"
             case conversation = "Conversation"
             case persistence = "Persistence"
+            case clipboard = "Clipboard"
         }
 
         let id = UUID()
@@ -113,6 +114,8 @@ final class AppModel {
     var selectedSavedConversationID: UUID?
     var isCaptureInProgress = false
     var isConversationInProgress = false
+    var isContextOverlayVisible = false
+    var isContextOverlayInChatMode = false
     let milestones: [Milestone] = [
         .init(title: "Menu Bar Utility", summary: "Primary entry point for opening the app and the first screenshot capture path."),
         .init(title: "Main Window", summary: "Conversation-focused workspace with a stable split-view layout."),
@@ -195,6 +198,9 @@ final class AppModel {
                 Task { @MainActor in
                     self?.removeContextItemFromOverlay(item)
                 }
+            },
+            onPresentationChange: { [weak self] in
+                self?.refreshOverlayPresentationState()
             }
         )
 
@@ -224,9 +230,14 @@ final class AppModel {
 
         let clipboardMonitor = ClipboardMonitor()
         self.clipboardMonitor = clipboardMonitor
-        clipboardMonitor.start { [weak self] text, sourceApp in
-            self?.handleExternalClipboardText(text, from: sourceApp)
-        }
+        clipboardMonitor.start(
+            onAttachFromClipboard: { [weak self] text, sourceApp in
+                self?.handleExternalClipboardText(text, from: sourceApp)
+            },
+            onDebugLog: { [weak self] message in
+                self?.appendDebugLog(message, source: .clipboard)
+            }
+        )
     }
 
     private func handleExternalClipboardText(_ text: String, from sourceApp: NSRunningApplication?) {
@@ -310,6 +321,7 @@ final class AppModel {
         contextSession?.clear()
         conversationCoordinator?.clearSession()
         overlayCoordinator?.hide()
+        refreshOverlayPresentationState()
         buildStatus = "Context stack cleared."
     }
 
@@ -377,6 +389,7 @@ final class AppModel {
         // syncOverlayState is called synchronously via the coordinator callback,
         // so viewModel.messages is populated before showChat runs.
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Resumed \"\(mostRecent.title)\"."
     }
 
@@ -389,15 +402,25 @@ final class AppModel {
     }
 
     func dismissVisibleContextOverlayIfNeeded() {
-        handleOverlayEscapeRollback()
+        dismissVisibleOverlay()
     }
 
-    func handleOverlayEscapeRollback() {
+    func dismissVisibleOverlay() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
         overlayCoordinator?.handleEscapeRollback()
+        refreshOverlayPresentationState()
+    }
+
+    func handleOverlayEscapeRollback() {
+        dismissVisibleOverlay()
+    }
+
+    private func refreshOverlayPresentationState() {
+        isContextOverlayVisible = overlayCoordinator?.isVisible ?? false
+        isContextOverlayInChatMode = isContextOverlayVisible && (overlayCoordinator?.isInChatMode ?? false)
     }
 
     func showMainWindow() {
@@ -442,12 +465,14 @@ final class AppModel {
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Context composer opened."
     }
 
     private func openContextConversationComposer() {
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Context composer opened."
     }
 
@@ -514,6 +539,7 @@ final class AppModel {
     private func showContextStackNearCursor() {
         syncOverlayState()
         overlayCoordinator?.showStack(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
     }
 
     func resetCaptureShortcutToDefault() {
@@ -598,6 +624,19 @@ final class AppModel {
 
     func clearDebugLog() {
         debugLogEntries.removeAll()
+    }
+
+    func appendDebugLog(_ message: String, source: DebugLogEntry.Source) {
+        debugLogEntries.insert(
+            DebugLogEntry(timestamp: Date(), source: source, message: message),
+            at: 0
+        )
+
+        if debugLogEntries.count > 100 {
+            debugLogEntries.removeLast(debugLogEntries.count - 100)
+        }
+
+        print("[DebugLog][\(source.rawValue)] \(message)")
     }
 
     private func setCaptureErrorMessage(_ message: String?, source: DebugLogEntry.Source) {
@@ -813,7 +852,6 @@ struct CuePrototypeApp: App {
                 Button("Clear Context Stack") {
                     appState.clearContextStack()
                 }
-                .keyboardShortcut(.escape, modifiers: [])
                 .disabled(!appState.hasContextItems)
             }
 
@@ -847,6 +885,16 @@ private struct MenuBarContentView: View {
     var body: some View {
         Button("Open App") {
             appState.showMainWindow()
+        }
+
+        if appState.isContextOverlayInChatMode {
+            Button("Dismiss Chat UI") {
+                appState.dismissVisibleOverlay()
+            }
+        } else if appState.isContextOverlayVisible {
+            Button("Dismiss Context") {
+                appState.dismissVisibleOverlay()
+            }
         }
 
         Divider()

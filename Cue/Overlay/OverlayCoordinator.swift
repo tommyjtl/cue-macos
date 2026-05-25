@@ -27,7 +27,8 @@ final class OverlayCoordinator {
         onSendDraft: @escaping (String) -> Void,
         onLoadMostRecent: @escaping () -> Void,
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
-        onRemoveContextItem: @escaping (ContextPreviewItem) -> Void
+        onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
+        onPresentationChange: @escaping () -> Void
     ) {
         windowController = ContextStackWindowController(
             onClear: onClear,
@@ -37,12 +38,17 @@ final class OverlayCoordinator {
             onSendDraft: onSendDraft,
             onLoadMostRecent: onLoadMostRecent,
             onSetWebSearchEnabled: onSetWebSearchEnabled,
-            onRemoveContextItem: onRemoveContextItem
+            onRemoveContextItem: onRemoveContextItem,
+            onPresentationChange: onPresentationChange
         )
     }
 
     var isVisible: Bool {
         windowController.isVisible
+    }
+
+    var isInChatMode: Bool {
+        windowController.isInChatMode
     }
 
     func update(snapshot: Snapshot) {

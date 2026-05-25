@@ -24,6 +24,7 @@ final class ContextStackWindowController: NSWindowController {
     private let onLoadMostRecent: () -> Void
     private let onSetWebSearchEnabled: (Bool) -> Void
     private let onRemoveContextItem: (ContextPreviewItem) -> Void
+    private let onPresentationChange: () -> Void
     private let panel: ContextStackPanel
     private let hostingView: NSHostingView<ContextStackView>
     private let viewModel: ContextPanelViewModel
@@ -35,7 +36,7 @@ final class ContextStackWindowController: NSWindowController {
     private var cursorEnteredPanelAt: CFTimeInterval?
     private var lastEscapeRollbackAt: CFTimeInterval?
 
-    init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void) {
+    init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void, onPresentationChange: @escaping () -> Void) {
         self.onClear = onClear
         self.onAppDeactivate = onAppDeactivate
         self.isCaptureInProgress = isCaptureInProgress
@@ -44,6 +45,7 @@ final class ContextStackWindowController: NSWindowController {
         self.onLoadMostRecent = onLoadMostRecent
         self.onSetWebSearchEnabled = onSetWebSearchEnabled
         self.onRemoveContextItem = onRemoveContextItem
+        self.onPresentationChange = onPresentationChange
         let viewModel = ContextPanelViewModel()
         self.viewModel = viewModel
         let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in }, onEscape: {})
@@ -89,6 +91,10 @@ final class ContextStackWindowController: NSWindowController {
         panel.isVisible
     }
 
+    var isInChatMode: Bool {
+        viewModel.mode == .chat
+    }
+
     func show(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
         let previousApp = NSWorkspace.shared.frontmostApplication
 
@@ -104,6 +110,7 @@ final class ContextStackWindowController: NSWindowController {
         panel.setFrameOrigin(clampedOrigin(for: panel.frame.size, near: point))
         presentStackPanelWithoutActivatingApp(revertingTo: previousApp)
         startFollowingCursor()
+        notifyPresentationChange()
     }
 
     func showChat(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
@@ -126,6 +133,7 @@ final class ContextStackWindowController: NSWindowController {
         requestComposerFocus()
         startFollowingCursor()
         SoundEffectPlayer.play(.chatOpened)
+        notifyPresentationChange()
     }
 
     private func presentStackPanelWithoutActivatingApp(revertingTo previousApp: NSRunningApplication?) {
@@ -176,6 +184,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.browserPageContexts = []
         setPanelInteractionMode(for: .stack)
         panel.orderOut(nil)
+        notifyPresentationChange()
     }
 
     private func startFollowingCursor() {
@@ -299,7 +308,7 @@ final class ContextStackWindowController: NSWindowController {
                     return handled
                 }
 
-                guard self.isEscapeKey(event) else { return event }
+                guard self.isEscapeKeyEvent(event) else { return event }
 
                 return self.handleEscapeRollback() ? nil : event
             }
@@ -316,9 +325,11 @@ final class ContextStackWindowController: NSWindowController {
     private func installGlobalEventMonitorsIfNeeded() {
         if globalEscapeMonitor == nil {
             globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self else { return }
-                guard self.panel.isVisible, self.isEscapeKey(event) else { return }
-                self.handleEscapeRollback()
+                guard Self.isEscapeKeyEvent(event) else { return }
+                Task { @MainActor in
+                    guard let self, self.panel.isVisible else { return }
+                    self.handleEscapeRollback()
+                }
             }
 
             if globalEscapeMonitor == nil {
@@ -436,12 +447,21 @@ final class ContextStackWindowController: NSWindowController {
             onClear()
         }
 
+        notifyPresentationChange()
         return true
     }
 
-    private func isEscapeKey(_ event: NSEvent) -> Bool {
+    nonisolated static func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
         event.keyCode == 53
-            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+            && event.modifierFlags.intersection(CaptureShortcut.modifierFlagsMask).isEmpty
+    }
+
+    private func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
+        Self.isEscapeKeyEvent(event)
+    }
+
+    private func notifyPresentationChange() {
+        onPresentationChange()
     }
 
     private func refreshPanelSize() {
@@ -505,6 +525,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.draftMessage = ""
         setPanelInteractionMode(for: .stack)
         refreshPanelSize()
+        notifyPresentationChange()
     }
 
     private func sendCurrentDraft() {
@@ -604,7 +625,7 @@ private final class ContextStackPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if isEscapeKey(event), onEscapeKey?() == true {
+        if ContextStackWindowController.isEscapeKeyEvent(event), onEscapeKey?() == true {
             return true
         }
 
@@ -612,7 +633,7 @@ private final class ContextStackPanel: NSPanel {
     }
 
     override func keyDown(with event: NSEvent) {
-        if isEscapeKey(event), onEscapeKey?() == true {
+        if ContextStackWindowController.isEscapeKeyEvent(event), onEscapeKey?() == true {
             return
         }
 
@@ -625,10 +646,5 @@ private final class ContextStackPanel: NSPanel {
             makeKey()
         }
         super.mouseDown(with: event)
-    }
-
-    private func isEscapeKey(_ event: NSEvent) -> Bool {
-        event.keyCode == 53
-            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
     }
 }
