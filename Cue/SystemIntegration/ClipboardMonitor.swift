@@ -44,9 +44,9 @@ final class ClipboardMonitor {
     private var globalCopyMonitor: Any?
     private var localCopyMonitor: Any?
     private var pasteboardWatchTask: Task<Void, Never>?
-    private var lastCopySignalAt: CFTimeInterval?
+    private var firstCopyChangeCount: Int?
+    private var firstCopyAt: CFTimeInterval?
     private var lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
-    private var lastLoggedMonitorStatus: String?
     private var onAttachFromClipboard: Handler?
     private var onDebugLog: DebugLogHandler?
 
@@ -67,7 +67,6 @@ final class ClipboardMonitor {
         lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
         installCopyMonitors()
         startPasteboardWatchLoop()
-        logMonitorStatus(prefix: "Started", force: true)
         print("[ClipboardMonitor] Started — attach on double copy (⌘C or pasteboard change)")
     }
 
@@ -77,19 +76,21 @@ final class ClipboardMonitor {
         removeCopyMonitors()
         onAttachFromClipboard = nil
         onDebugLog = nil
-        lastCopySignalAt = nil
+        firstCopyChangeCount = nil
+        firstCopyAt = nil
     }
 
     func refreshAccessibilityDependentMonitors() {
         if permissionManager.hasAccessibilityPermission() {
             installGlobalCopyMonitorIfNeeded()
-        } else {
-            removeGlobalCopyMonitor()
-            logDebug("Accessibility not granted — ⌘C detection works only while Cue is focused; pasteboard watching stays active")
-            print("[ClipboardMonitor] Accessibility not granted — ⌘C detection works only while Cue is focused")
+            return
         }
 
-        logMonitorStatus(prefix: "Monitors refreshed")
+        guard globalCopyMonitor != nil else { return }
+
+        removeGlobalCopyMonitor()
+        logDebug("Accessibility not granted — ⌘C detection works only while Cue is focused; pasteboard watching stays active")
+        print("[ClipboardMonitor] Accessibility not granted — ⌘C detection works only while Cue is focused")
     }
 
     nonisolated static func temporarilyIgnoreCopyShortcut(for interval: TimeInterval = 0.35) {
@@ -170,17 +171,21 @@ final class ClipboardMonitor {
         return String(text.prefix(limit)) + "…"
     }
 
-    nonisolated static func shouldAttachAfterCopySignal(
-        lastCopySignalAt: CFTimeInterval?,
+    nonisolated static func shouldAttachAfterPasteboardChange(
+        firstCopyChangeCount: Int?,
+        firstCopyAt: CFTimeInterval?,
+        newChangeCount: Int,
         now: CFTimeInterval,
         maxIntervalBetweenCopies: CFTimeInterval = DoubleCopyConfig.maxIntervalBetweenCopies
-    ) -> (nextLastCopySignalAt: CFTimeInterval?, shouldAttach: Bool) {
-        if let lastCopySignalAt,
-           now - lastCopySignalAt <= maxIntervalBetweenCopies {
-            return (nil, true)
+    ) -> (nextFirstCopyChangeCount: Int?, nextFirstCopyAt: CFTimeInterval?, shouldAttach: Bool) {
+        if let firstCopyAt,
+           let firstCopyChangeCount,
+           firstCopyChangeCount != newChangeCount,
+           now - firstCopyAt <= maxIntervalBetweenCopies {
+            return (nil, nil, true)
         }
 
-        return (now, false)
+        return (newChangeCount, now, false)
     }
 
     private func installCopyMonitors() {
@@ -241,36 +246,43 @@ final class ClipboardMonitor {
 
     private func checkPasteboardForChanges() {
         guard !Task.isCancelled else { return }
+        processPasteboardChangeIfNeeded(source: "pasteboard", monitor: nil)
+    }
+
+    private func handleCopyKeyDown(_ event: NSEvent, monitor: String) {
+        guard Self.isCopyKeyDown(event) else { return }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: DoubleCopyConfig.pasteboardReadDelay)
+            self.processPasteboardChangeIfNeeded(source: "⌘C", monitor: monitor)
+        }
+    }
+
+    private func processPasteboardChangeIfNeeded(source: String, monitor: String?) {
+        guard !Self.shouldIgnoreCopyShortcut() else { return }
 
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
         guard changeCount != lastObservedPasteboardChangeCount else { return }
 
         lastObservedPasteboardChangeCount = changeCount
-        guard !Self.shouldIgnoreCopyShortcut() else { return }
 
-        let diagnostic = Self.diagnosePasteboard(pasteboard)
-        handleCopySignal(source: "pasteboard", monitor: nil, diagnostic: diagnostic)
-    }
-
-    private func handleCopyKeyDown(_ event: NSEvent, monitor: String) {
-        guard Self.isCopyKeyDown(event) else { return }
-
-        let diagnostic = Self.diagnosePasteboard()
-        handleCopySignal(source: "⌘C", monitor: monitor, diagnostic: diagnostic)
-    }
-
-    private func handleCopySignal(source: String, monitor: String?, diagnostic: PasteboardDiagnostic) {
         let now = CFAbsoluteTimeGetCurrent()
-        let decision = Self.shouldAttachAfterCopySignal(lastCopySignalAt: lastCopySignalAt, now: now)
-        lastCopySignalAt = decision.nextLastCopySignalAt
+        let decision = Self.shouldAttachAfterPasteboardChange(
+            firstCopyChangeCount: firstCopyChangeCount,
+            firstCopyAt: firstCopyAt,
+            newChangeCount: changeCount,
+            now: now
+        )
+        firstCopyChangeCount = decision.nextFirstCopyChangeCount
+        firstCopyAt = decision.nextFirstCopyAt
 
         let frontmostApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
         let viaMonitor = monitor.map { " via \($0) monitor" } ?? ""
 
         if decision.shouldAttach {
-            logDebug("Second copy signal from \(source)\(viaMonitor) in \(frontmostApp) — attaching")
-            print("[ClipboardMonitor] Second copy signal — attaching")
+            logDebug("Second copy from \(source)\(viaMonitor) in \(frontmostApp) — attaching")
+            print("[ClipboardMonitor] Second pasteboard change — attaching")
             Task { @MainActor in
                 try? await Task.sleep(for: DoubleCopyConfig.pasteboardReadDelay)
                 attachMostRecentClipboardText(sourceLabel: source, frontmostAppName: frontmostApp)
@@ -278,8 +290,8 @@ final class ClipboardMonitor {
             return
         }
 
-        logDebug("First copy signal from \(source)\(viaMonitor) in \(frontmostApp) — copy again within 0.5s to attach")
-        print("[ClipboardMonitor] First copy signal — copy again to attach")
+        logDebug("First copy from \(source)\(viaMonitor) in \(frontmostApp) — copy again within 0.5s to attach")
+        print("[ClipboardMonitor] First pasteboard change — copy again to attach")
 
         Task { @MainActor in
             try? await Task.sleep(for: DoubleCopyConfig.pasteboardReadDelay)
@@ -309,17 +321,6 @@ final class ClipboardMonitor {
             "[ClipboardMonitor] Attached \(Self.describe(text)) from \(sourceApp?.localizedName ?? "unknown")"
         )
         onAttachFromClipboard?(text, sourceApp)
-    }
-
-    private func monitorStatusMessage(prefix: String) -> String {
-        "\(prefix) — local monitor=\(localCopyMonitor != nil), global monitor=\(globalCopyMonitor != nil), pasteboard watch=active, accessibility=\(permissionManager.hasAccessibilityPermission())"
-    }
-
-    private func logMonitorStatus(prefix: String, force: Bool = false) {
-        let message = monitorStatusMessage(prefix: prefix)
-        guard force || message != lastLoggedMonitorStatus else { return }
-        lastLoggedMonitorStatus = message
-        logDebug(message)
     }
 
     private func logDebug(_ message: String) {

@@ -54,27 +54,39 @@ struct SystemIntegrationTests {
         #expect(!AccessibilityClient.resolveTrustedState(cachedTrusted: false, liveTrusted: false))
     }
 
-    @Test func shouldAttachAfterSecondCopyWithinInterval() {
+    @Test func shouldAttachAfterSecondPasteboardChangeWithinInterval() {
         let now: CFTimeInterval = 100
 
-        let firstPress = ClipboardMonitor.shouldAttachAfterCopySignal(lastCopySignalAt: nil, now: now)
-        #expect(firstPress.shouldAttach == false)
-        #expect(firstPress.nextLastCopySignalAt == now)
+        let firstCopy = ClipboardMonitor.shouldAttachAfterPasteboardChange(
+            firstCopyChangeCount: nil,
+            firstCopyAt: nil,
+            newChangeCount: 100,
+            now: now
+        )
+        #expect(firstCopy.shouldAttach == false)
+        #expect(firstCopy.nextFirstCopyChangeCount == 100)
+        #expect(firstCopy.nextFirstCopyAt == now)
 
-        let secondPress = ClipboardMonitor.shouldAttachAfterCopySignal(
-            lastCopySignalAt: firstPress.nextLastCopySignalAt,
+        let secondCopy = ClipboardMonitor.shouldAttachAfterPasteboardChange(
+            firstCopyChangeCount: firstCopy.nextFirstCopyChangeCount,
+            firstCopyAt: firstCopy.nextFirstCopyAt,
+            newChangeCount: 101,
             now: now + 0.2
         )
-        #expect(secondPress.shouldAttach == true)
-        #expect(secondPress.nextLastCopySignalAt == nil)
+        #expect(secondCopy.shouldAttach == true)
+        #expect(secondCopy.nextFirstCopyChangeCount == nil)
+        #expect(secondCopy.nextFirstCopyAt == nil)
 
-        let tooLate = ClipboardMonitor.shouldAttachAfterCopySignal(
-            lastCopySignalAt: now,
+        let tooLate = ClipboardMonitor.shouldAttachAfterPasteboardChange(
+            firstCopyChangeCount: 200,
+            firstCopyAt: now,
+            newChangeCount: 201,
             now: now + 0.6,
             maxIntervalBetweenCopies: 0.5
         )
         #expect(tooLate.shouldAttach == false)
-        #expect(tooLate.nextLastCopySignalAt == now + 0.6)
+        #expect(tooLate.nextFirstCopyChangeCount == 201)
+        #expect(tooLate.nextFirstCopyAt == now + 0.6)
     }
 
     @Test func isCopyKeyDownMatchesCharacterEvenWithDifferentKeyCode() {

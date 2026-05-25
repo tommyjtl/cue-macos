@@ -204,13 +204,13 @@ private struct DebugWorkspaceView: View {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
                 SettingsPageHeader(
                     title: "Debug",
-                    subtitle: "Runtime errors and clipboard shortcut diagnostics collected from the current app session."
+                    subtitle: "Session log for errors and clipboard attach diagnostics."
                 )
 
                 SettingsCard {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("Error Log")
+                            Text("Log")
                                 .font(.system(size: 15, weight: .semibold))
 
                             Spacer()
@@ -224,7 +224,7 @@ private struct DebugWorkspaceView: View {
                         .padding(.top, SettingsLayout.rowVerticalPadding)
 
                         if appState.debugLogEntries.isEmpty {
-                            Text("No debug events logged in this session yet.")
+                            Text("No log entries in this session yet.")
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
