@@ -51,6 +51,10 @@ final class OverlayCoordinator {
         windowController.isInChatMode
     }
 
+    var isComposerInputFocused: Bool {
+        windowController.isComposerInputFocused
+    }
+
     func update(snapshot: Snapshot) {
         self.snapshot = snapshot
         windowController.updateContext(

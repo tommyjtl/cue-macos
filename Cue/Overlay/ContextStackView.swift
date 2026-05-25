@@ -978,11 +978,6 @@ private struct ComposerTextField: NSViewRepresentable {
                 return true
             }
 
-            if commandSelector == #selector(NSText.selectAll(_:)) {
-                textView.selectAll(nil)
-                return true
-            }
-
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 onEscape()
                 return true
@@ -1005,18 +1000,11 @@ private final class FirstMouseTextField: NSTextField {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "a" {
-            if let editor = currentEditor() {
-                editor.selectAll(nil)
-                return true
-            }
-
-            selectText(nil)
+        if super.performKeyEquivalent(with: event) {
             return true
         }
 
-        return super.performKeyEquivalent(with: event)
+        return ComposerEditShortcut.perform(with: event, sender: self)
     }
 }
 

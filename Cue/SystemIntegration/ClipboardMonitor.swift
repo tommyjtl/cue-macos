@@ -7,6 +7,7 @@ import Foundation
 final class ClipboardMonitor {
     typealias Handler = @MainActor (_ text: String, _ sourceApp: NSRunningApplication?) -> Void
     typealias DebugLogHandler = @MainActor (_ message: String) -> Void
+    typealias BypassHandler = @MainActor () -> Bool
 
     struct PasteboardDiagnostic: Equatable {
         let changeCount: Int
@@ -49,6 +50,7 @@ final class ClipboardMonitor {
     private var lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
     private var onAttachFromClipboard: Handler?
     private var onDebugLog: DebugLogHandler?
+    private var shouldBypassAttachDetection: BypassHandler = { false }
 
     nonisolated(unsafe) private static var ignoreCopyShortcutUntil: Date?
 
@@ -59,11 +61,16 @@ final class ClipboardMonitor {
         NSPasteboard.PasteboardType("NSStringPboardType")
     ]
 
-    func start(onAttachFromClipboard: @escaping Handler, onDebugLog: DebugLogHandler? = nil) {
+    func start(
+        onAttachFromClipboard: @escaping Handler,
+        onDebugLog: DebugLogHandler? = nil,
+        shouldBypassAttachDetection: @escaping BypassHandler = { false }
+    ) {
         guard self.onAttachFromClipboard == nil else { return }
 
         self.onAttachFromClipboard = onAttachFromClipboard
         self.onDebugLog = onDebugLog
+        self.shouldBypassAttachDetection = shouldBypassAttachDetection
         lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
         installCopyMonitors()
         startPasteboardWatchLoop()
@@ -76,6 +83,7 @@ final class ClipboardMonitor {
         removeCopyMonitors()
         onAttachFromClipboard = nil
         onDebugLog = nil
+        shouldBypassAttachDetection = { false }
         firstCopyChangeCount = nil
         firstCopyAt = nil
     }
@@ -264,6 +272,13 @@ final class ClipboardMonitor {
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
         guard changeCount != lastObservedPasteboardChangeCount else { return }
+
+        if shouldBypassAttachDetection() {
+            lastObservedPasteboardChangeCount = changeCount
+            firstCopyChangeCount = nil
+            firstCopyAt = nil
+            return
+        }
 
         lastObservedPasteboardChangeCount = changeCount
 
