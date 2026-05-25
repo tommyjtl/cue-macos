@@ -12,7 +12,7 @@ final class ContextPanelViewModel {
     }
 
     var screenshots: [CapturedScreenshot] = []
-    var selectedTextContexts: [SelectedTextManager.SelectionSnapshot] = []
+    var selectedTextContexts: [AttachedTextContext] = []
     var browserPageContexts: [BrowserPageContext] = []
     var messages: [ConversationMessageDTO] = []
     var mode: Mode = .stack
@@ -335,7 +335,7 @@ struct ContextStackView: View {
 
 enum ContextPreviewItem: Identifiable {
     case screenshot(CapturedScreenshot)
-    case selectedText(SelectedTextManager.SelectionSnapshot)
+    case selectedText(AttachedTextContext)
     case browserPage(BrowserPageContext)
 
     var id: String {
@@ -404,6 +404,7 @@ private struct ConversationMessageBubble: View {
                     .padding(.top, 4)
                 HStack {
                     Button {
+                        ClipboardMonitor.temporarilyIgnoreCopyShortcut()
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(message.text, forType: .string)
                     } label: {
@@ -595,7 +596,7 @@ private struct ComposerContextTile: View {
         case let .screenshot(screenshot):
             ScreenshotThumbnail(screenshot: screenshot)
         case let .selectedText(selectionSnapshot):
-            SelectedTextAttachmentTile(selectionSnapshot: selectionSnapshot)
+            SelectedTextAttachmentTile(attachedText: selectionSnapshot)
         case let .browserPage(context):
             BrowserPageAttachmentTile(context: context)
         }
@@ -603,7 +604,7 @@ private struct ComposerContextTile: View {
 }
 
 private struct SelectedTextAttachmentTile: View {
-    let selectionSnapshot: SelectedTextManager.SelectionSnapshot
+    let attachedText: AttachedTextContext
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -625,7 +626,7 @@ private struct SelectedTextAttachmentTile: View {
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(selectionSnapshot.appName ?? "Selected Text")
+                    Text(attachedText.appName ?? "Selected Text")
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
 
@@ -643,7 +644,7 @@ private struct SelectedTextAttachmentTile: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(.white.opacity(0.12))
         )
-        .help(selectionSnapshot.text)
+        .help(attachedText.text)
     }
 
     private func attachmentStripe(width: CGFloat, opacity: Double) -> some View {

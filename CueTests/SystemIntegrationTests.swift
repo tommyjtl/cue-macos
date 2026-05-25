@@ -3,6 +3,7 @@
 //  CueTests
 //
 
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -46,13 +47,51 @@ struct SystemIntegrationTests {
         #expect(!AccessibilityClient.canQueryOtherApplicationsTree(probedOtherApp: true, queriedAnySuccessfully: false))
     }
 
-    @Test func resolveTrustedStateDetectsStaleCachedGrant() {
-        #expect(!AccessibilityClient.resolveTrustedState(cachedTrusted: true, liveTrusted: false))
+    @Test func resolveTrustedStatePrefersCachedGrant() {
+        #expect(AccessibilityClient.resolveTrustedState(cachedTrusted: true, liveTrusted: false))
         #expect(AccessibilityClient.resolveTrustedState(cachedTrusted: true, liveTrusted: true))
         #expect(AccessibilityClient.resolveTrustedState(cachedTrusted: false, liveTrusted: true))
         #expect(!AccessibilityClient.resolveTrustedState(cachedTrusted: false, liveTrusted: false))
     }
 
+    @Test func shouldAttachAfterSecondCopyWithinInterval() {
+        let now: CFTimeInterval = 100
+
+        let firstPress = ClipboardMonitor.shouldAttachAfterCopyKeyPress(lastCopyKeyDownAt: nil, now: now)
+        #expect(firstPress.shouldAttach == false)
+        #expect(firstPress.nextLastCopyKeyDownAt == now)
+
+        let secondPress = ClipboardMonitor.shouldAttachAfterCopyKeyPress(
+            lastCopyKeyDownAt: firstPress.nextLastCopyKeyDownAt,
+            now: now + 0.2
+        )
+        #expect(secondPress.shouldAttach == true)
+        #expect(secondPress.nextLastCopyKeyDownAt == nil)
+
+        let tooLate = ClipboardMonitor.shouldAttachAfterCopyKeyPress(
+            lastCopyKeyDownAt: now,
+            now: now + 0.6,
+            maxIntervalBetweenCopies: 0.5
+        )
+        #expect(tooLate.shouldAttach == false)
+        #expect(tooLate.nextLastCopyKeyDownAt == now + 0.6)
+    }
+
+    @Test func clipboardMonitorReadStringRequiresNonEmptyPlainText() {
+        #expect(ClipboardMonitor.readString(from: makePasteboard(string: "hello")) == "hello")
+        #expect(ClipboardMonitor.readString(from: makePasteboard(string: "  \n")) == nil)
+
+        let emptyPasteboard = NSPasteboard(name: NSPasteboard.Name("test.empty.\(UUID().uuidString)"))
+        emptyPasteboard.clearContents()
+        #expect(ClipboardMonitor.readString(from: emptyPasteboard) == nil)
+    }
+
+    private func makePasteboard(string: String) -> NSPasteboard {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: NSPasteboard.PasteboardType.string)
+        return pasteboard
+    }
     @Test func selectionRectFlipsYIntoScreenCaptureKitSpace() {
         let displayFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         let rectInDisplaySpace = CGRect(x: 100, y: 200, width: 50, height: 60)

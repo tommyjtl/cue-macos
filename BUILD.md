@@ -33,9 +33,9 @@ The app is a menu-bar utility (no Dock icon). Use the text-cursor icon in the me
 
 ### Permissions
 
-Cue needs **Screen Recording** and **Accessibility** to capture screenshots and read selected text from other apps. Grant both when prompted during onboarding or in **System Settings → Privacy & Security**.
+Cue needs **Screen Recording** and **Accessibility** to capture screenshots and listen for global shortcuts (double Option, double ⌘C, double Shift) in other apps. Grant both when prompted during onboarding or in **System Settings → Privacy & Security**.
 
-**After enabling Screen Recording, relaunch Cue** — Accessibility usually updates in the app immediately; Screen Recording does not.
+**After enabling permissions, relaunch Cue** — toggles in System Settings may look on before this app can use them, especially after replacing the app binary.
 
 | How you run Cue | What to do after toggling Screen Recording ON |
 |-----------------|-----------------------------------------------|

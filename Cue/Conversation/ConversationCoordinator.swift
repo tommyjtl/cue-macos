@@ -82,7 +82,7 @@ final class ConversationCoordinator {
         draft: String,
         configuration: ConversationConfiguration,
         screenshots: [CapturedScreenshot],
-        selectedTextContexts: [SelectedTextManager.SelectionSnapshot],
+        selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
         setStatus: @escaping @MainActor (String) -> Void,
         setError: @escaping @MainActor (String?) -> Void,
@@ -229,7 +229,7 @@ final class ConversationCoordinator {
         onSessionChange(session)
     }
 
-    private func contextualMessages(for selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPages: [BrowserPageContext]) -> [ConversationMessageDTO] {
+    private func contextualMessages(for selectedTextContexts: [AttachedTextContext], browserPages: [BrowserPageContext]) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
 
         for page in browserPages.reversed() {

@@ -33,6 +33,7 @@ final class ContextStackWindowController: NSWindowController {
     private var localMouseDownMonitor: Any?
     private var globalMouseDownMonitor: Any?
     private var cursorEnteredPanelAt: CFTimeInterval?
+    private var lastEscapeRollbackAt: CFTimeInterval?
 
     init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void) {
         self.onClear = onClear
@@ -88,7 +89,7 @@ final class ContextStackWindowController: NSWindowController {
         panel.isVisible
     }
 
-    func show(screenshots: [CapturedScreenshot], selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
+    func show(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
         let previousApp = NSWorkspace.shared.frontmostApplication
 
         guard !screenshots.isEmpty || !selectedTextContexts.isEmpty || !browserPageContexts.isEmpty else {
@@ -105,7 +106,7 @@ final class ContextStackWindowController: NSWindowController {
         startFollowingCursor()
     }
 
-    func showChat(screenshots: [CapturedScreenshot], selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
+    func showChat(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
         guard !screenshots.isEmpty || !selectedTextContexts.isEmpty || !browserPageContexts.isEmpty || !viewModel.messages.isEmpty else {
             return
         }
@@ -141,7 +142,7 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    func updateContext(screenshots: [CapturedScreenshot], selectedTextContexts: [SelectedTextManager.SelectionSnapshot], browserPageContexts: [BrowserPageContext]) {
+    func updateContext(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext]) {
         viewModel.screenshots = screenshots
         viewModel.selectedTextContexts = selectedTextContexts
         viewModel.browserPageContexts = browserPageContexts
@@ -279,39 +280,68 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     private func installEscapeMonitorsIfNeeded() {
-        guard localEscapeMonitor == nil,
-              globalEscapeMonitor == nil,
-              localMouseDownMonitor == nil,
-              globalMouseDownMonitor == nil else {
-            return
+        installLocalEventMonitorsIfNeeded()
+        installGlobalEventMonitorsIfNeeded()
+    }
+
+    func refreshAccessibilityDependentGlobalMonitors() {
+        removeGlobalEventMonitors()
+        installGlobalEventMonitorsIfNeeded()
+    }
+
+    private func installLocalEventMonitorsIfNeeded() {
+        if localEscapeMonitor == nil {
+            localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                guard self.panel.isVisible else { return event }
+
+                if let handled = self.handleChatComposerKeyEquivalent(event) {
+                    return handled
+                }
+
+                guard self.isEscapeKey(event) else { return event }
+
+                return self.handleEscapeRollback() ? nil : event
+            }
         }
 
-        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            guard self.panel.isVisible else { return event }
+        if localMouseDownMonitor == nil {
+            localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+                self?.handleMouseDown()
+                return event
+            }
+        }
+    }
 
-            if let handled = self.handleChatComposerKeyEquivalent(event) {
-                return handled
+    private func installGlobalEventMonitorsIfNeeded() {
+        if globalEscapeMonitor == nil {
+            globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return }
+                guard self.panel.isVisible, self.isEscapeKey(event) else { return }
+                self.handleEscapeRollback()
             }
 
-            guard self.isEscapeKey(event) else { return event }
-
-            return self.handleEscapeRollback() ? nil : event
+            if globalEscapeMonitor == nil {
+                print("[ContextStackWindowController] Global Escape monitor unavailable — grant Accessibility to dismiss the overlay from other apps")
+            }
         }
 
-        globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return }
-            guard self.panel.isVisible, self.isEscapeKey(event) else { return }
-            self.handleEscapeRollback()
+        if globalMouseDownMonitor == nil {
+            globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+                self?.handleMouseDown()
+            }
+        }
+    }
+
+    private func removeGlobalEventMonitors() {
+        if let globalEscapeMonitor {
+            NSEvent.removeMonitor(globalEscapeMonitor)
+            self.globalEscapeMonitor = nil
         }
 
-        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            self?.handleMouseDown()
-            return event
-        }
-
-        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
-            self?.handleMouseDown()
+        if let globalMouseDownMonitor {
+            NSEvent.removeMonitor(globalMouseDownMonitor)
+            self.globalMouseDownMonitor = nil
         }
     }
 
@@ -321,19 +351,11 @@ final class ContextStackWindowController: NSWindowController {
             self.localEscapeMonitor = nil
         }
 
-        if let globalEscapeMonitor {
-            NSEvent.removeMonitor(globalEscapeMonitor)
-            self.globalEscapeMonitor = nil
-        }
+        removeGlobalEventMonitors()
 
         if let localMouseDownMonitor {
             NSEvent.removeMonitor(localMouseDownMonitor)
             self.localMouseDownMonitor = nil
-        }
-
-        if let globalMouseDownMonitor {
-            NSEvent.removeMonitor(globalMouseDownMonitor)
-            self.globalMouseDownMonitor = nil
         }
     }
 
@@ -400,6 +422,12 @@ final class ContextStackWindowController: NSWindowController {
     func handleEscapeRollback() -> Bool {
         guard panel.isVisible else { return false }
         guard !isCaptureInProgress() else { return false }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if let lastEscapeRollbackAt, now - lastEscapeRollbackAt < 0.15 {
+            return true
+        }
+        lastEscapeRollbackAt = now
 
         switch viewModel.mode {
         case .chat:

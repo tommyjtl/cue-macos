@@ -339,7 +339,7 @@ private struct PermissionsSettingsSection: View {
                 )
             } else if appState.needsRestartForPermissions {
                 PermissionHelpCallout(
-                    title: "Relaunch Cue to apply Screen Recording",
+                    title: permissionManager.restartAfterPermissionChangeTitle,
                     message: permissionManager.restartAfterPermissionChangeHint,
                     showsQuitButton: true
                 )
@@ -378,7 +378,7 @@ private struct PermissionsSettingsSection: View {
         case .screenRecording:
             return "Enable Screen Recording for Cue.app, then relaunch Cue"
         case .accessibility:
-            return "Enable Accessibility for Cue.app in System Settings"
+            return "Enable Accessibility for Cue.app in System Settings, then relaunch Cue"
         }
     }
 

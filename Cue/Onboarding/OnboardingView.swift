@@ -26,7 +26,7 @@ extension PermissionItem {
         id: .accessibility,
         systemImage: "accessibility",
         title: "Accessibility",
-        reason: "Cue reads the text you have selected in other apps so you can attach it to a conversation without copying and pasting. Accessibility is also required to detect the global capture shortcut.",
+        reason: "Cue listens for global shortcuts like double Option and double ⌘C. Accessibility is required for those shortcuts to work in other apps.",
         grantLabel: "Allow Accessibility"
     )
 

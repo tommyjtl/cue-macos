@@ -19,14 +19,14 @@ enum AccessibilityClient {
         return resolveTrustedState()
     }
 
-    /// Combines `AXIsProcessTrusted` with a live TCC probe. Cached AX trust can stay
-    /// true after macOS revokes permission (e.g. post-update TCC roll); a listen-only
-    /// event tap consults the live database without intercepting events.
+    /// Trust `AXIsProcessTrusted()` when true. The listen-only event tap is kept for
+    /// diagnostics only — it can fail on valid installs (especially after replacing the app)
+    /// even while Accessibility APIs work.
     static func resolveTrustedState(cachedTrusted: Bool = AXIsProcessTrusted(), liveTrusted: Bool = canCreateListenOnlyEventTap()) -> Bool {
-        if cachedTrusted, !liveTrusted {
-            return false
+        if cachedTrusted {
+            return true
         }
-        return cachedTrusted || liveTrusted
+        return liveTrusted
     }
 
     static func canCreateListenOnlyEventTap() -> Bool {

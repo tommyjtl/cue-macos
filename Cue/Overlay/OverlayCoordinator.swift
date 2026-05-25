@@ -5,7 +5,7 @@ import Foundation
 final class OverlayCoordinator {
     struct Snapshot {
         var screenshots: [CapturedScreenshot] = []
-        var selectedTextContexts: [SelectedTextManager.SelectionSnapshot] = []
+        var selectedTextContexts: [AttachedTextContext] = []
         var browserPageContexts: [BrowserPageContext] = []
         var messages: [ConversationMessageDTO] = []
         var isSending = false
@@ -87,5 +87,9 @@ final class OverlayCoordinator {
 
     func handleEscapeRollback() {
         windowController.handleEscapeRollback()
+    }
+
+    func refreshAccessibilityDependentGlobalMonitors() {
+        windowController.refreshAccessibilityDependentGlobalMonitors()
     }
 }

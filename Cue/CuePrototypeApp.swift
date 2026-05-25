@@ -87,6 +87,7 @@ final class AppModel {
     @ObservationIgnored private var conversationCoordinator: ConversationCoordinator?
     @ObservationIgnored private var browserWebServer: BrowserWebServer?
     @ObservationIgnored private var permissionMonitor: PermissionMonitor?
+    @ObservationIgnored private var clipboardMonitor: ClipboardMonitor?
     private var hasStartedBackgroundServices = false
 
     // Observable permission state — updated from AppModel's stable monitoring tasks,
@@ -105,7 +106,7 @@ final class AppModel {
     var captureErrorMessage: String?
     var debugLogEntries: [DebugLogEntry] = []
     var capturedScreenshots: [CapturedScreenshot] = []
-    var selectedTextContexts: [SelectedTextManager.SelectionSnapshot] = []
+    var selectedTextContexts: [AttachedTextContext] = []
     var browserPageContexts: [BrowserPageContext] = []
     var conversationMessages: [ConversationMessageDTO] = []
     var savedConversations: [PersistedConversation] = []
@@ -218,18 +219,26 @@ final class AppModel {
                 Task { @MainActor in
                     self?.beginContextConversation()
                 }
-            },
-            onDismissOverlayTrigger: { [weak self] in
-                Task { @MainActor in
-                    self?.handleOverlayEscapeRollback()
-                }
-            },
-            onPrefetchSelectedText: { [weak self] in
-                Task { @MainActor in
-                    self?.contextSession?.prefetchSelectedTextCapture()
-                }
             }
         )
+
+        let clipboardMonitor = ClipboardMonitor()
+        self.clipboardMonitor = clipboardMonitor
+        clipboardMonitor.start { [weak self] text, sourceApp in
+            self?.handleExternalClipboardText(text, from: sourceApp)
+        }
+    }
+
+    private func handleExternalClipboardText(_ text: String, from sourceApp: NSRunningApplication?) {
+        guard contextSession?.attachClipboardText(text, frontmostApplication: sourceApp) == true else {
+            print("[AppModel] Clipboard text already attached — \(ClipboardMonitor.preview(text))")
+            return
+        }
+
+        buildStatus = "Clipboard text attached to context (double ⌘C)."
+        setCaptureErrorMessage(nil, source: .selectedText)
+        print("[AppModel] Attached clipboard text to context — \(ClipboardMonitor.describe(text))")
+        showContextStackNearCursor()
     }
 
     // MARK: - Permission Monitoring
@@ -263,17 +272,14 @@ final class AppModel {
         needsRestartForPermissions = newRestart
 
         hotkeyManager?.refreshAccessibilityDependentMonitors()
+        clipboardMonitor?.refreshAccessibilityDependentMonitors()
+        overlayCoordinator?.refreshAccessibilityDependentGlobalMonitors()
     }
 
     // MARK: - Capture
 
     private func handleCaptureShortcutTrigger() {
-        inspectSelectedTextForConversationTrigger(
-            presentChatAfterSelection: false,
-            onSelectionUnavailable: { [weak self] in
-                self?.beginScreenshotCapture()
-            }
-        )
+        beginScreenshotCapture()
     }
 
     func beginScreenshotCapture() {
@@ -424,75 +430,11 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        guard hasContextItems else {
-            // No context in the panel yet. Check whether text is currently selected in
-            // the frontmost app WITHOUT attaching it — this avoids the ambiguous
-            // onSelectionUnavailable callback firing for AX glitches.
-            if contextSession?.hasCurrentlySelectedText() == true {
-                // Text is selected: attach it and open a new conversation.
-                inspectSelectedTextForConversationTrigger(
-                    presentChatAfterSelection: true,
-                    onSelectionUnavailable: { [weak self] in
-                        // AX read succeeded in the pre-check but failed in the attach call
-                        // (e.g. focus changed between the two calls). Keep the user on
-                        // a fresh composer path instead of unexpectedly resuming the
-                        // most recent saved conversation.
-                        self?.openFreshContextConversationComposer()
-                    },
-                    onSelectionAlreadyAttached: { [weak self] in
-                        // Same text is already in the current context, so this should
-                        // still begin a fresh context-backed session rather than resume
-                        // the last saved conversation.
-                        self?.openFreshContextConversationComposer()
-                    }
-                )
-            } else {
-                // Nothing selected and no context: resume the most recent conversation.
-                openMostRecentConversationChatIfAvailable()
-            }
-            return
+        if hasContextItems {
+            openFreshContextConversationComposer()
+        } else {
+            openMostRecentConversationChatIfAvailable()
         }
-
-        inspectSelectedTextForConversationTrigger(
-            presentChatAfterSelection: true,
-            onSelectionUnavailable: { [weak self] in
-                self?.openFreshContextConversationComposer()
-            },
-            onSelectionAlreadyAttached: { [weak self] in
-                self?.openFreshContextConversationComposer()
-            }
-        )
-    }
-
-    private func inspectSelectedTextForConversationTrigger(
-        presentChatAfterSelection: Bool,
-        onSelectionUnavailable: @escaping @MainActor () -> Void = {},
-        onSelectionAlreadyAttached: @escaping @MainActor () -> Void = {}
-    ) {
-        contextSession?.inspectSelectedTextForConversationTrigger(
-            setStatus: { [weak self] status in
-                self?.buildStatus = status
-            },
-            setError: { [weak self] message in
-                self?.setCaptureErrorMessage(message, source: .selectedText)
-            },
-            onSelectionUnavailable: onSelectionUnavailable,
-            onSelectionAlreadyAttached: onSelectionAlreadyAttached,
-            onSelectionReady: { [weak self] in
-                guard let self, !selectedTextContexts.isEmpty else {
-                    return
-                }
-
-                syncOverlayState()
-
-                if presentChatAfterSelection {
-                    openFreshContextConversationComposer()
-                } else {
-                    overlayCoordinator?.showStack(near: NSEvent.mouseLocation)
-                    buildStatus = "Selected text attached to the context window."
-                }
-            }
-        )
     }
 
     private func openFreshContextConversationComposer() {
