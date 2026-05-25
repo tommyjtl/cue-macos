@@ -1,12 +1,20 @@
 import AppKit
 import Foundation
 
+private enum DoubleCopyConfig {
+    nonisolated static let copyKeyCode: UInt16 = 8
+    nonisolated static let maxIntervalBetweenCopies: CFTimeInterval = 0.5
+    static let pasteboardReadDelay: Duration = .milliseconds(100)
+    static let pasteboardPollInterval: Duration = .milliseconds(250)
+}
+
 /// Attaches clipboard text to context when the user copies twice in quick succession.
 /// Signals come from ⌘C key events and/or pasteboard changeCount updates (covers right-click Copy).
 @MainActor
 final class ClipboardMonitor {
     typealias Handler = @MainActor (_ text: String, _ sourceApp: NSRunningApplication?) -> Void
     typealias DebugLogHandler = @MainActor (_ message: String) -> Void
+    typealias BypassHandler = @MainActor () -> Bool
 
     struct PasteboardDiagnostic: Equatable {
         let changeCount: Int
@@ -33,13 +41,6 @@ final class ClipboardMonitor {
         }
     }
 
-    private enum DoubleCopyConfig {
-        static let copyKeyCode: UInt16 = 8
-        static let maxIntervalBetweenCopies: CFTimeInterval = 0.5
-        static let pasteboardReadDelay: Duration = .milliseconds(100)
-        static let pasteboardPollInterval: Duration = .milliseconds(250)
-    }
-
     private let permissionManager = PermissionManager.shared
     private var globalCopyMonitor: Any?
     private var localCopyMonitor: Any?
@@ -49,6 +50,7 @@ final class ClipboardMonitor {
     private var lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
     private var onAttachFromClipboard: Handler?
     private var onDebugLog: DebugLogHandler?
+    private var shouldBypassAttachDetection: BypassHandler = { false }
 
     nonisolated(unsafe) private static var ignoreCopyShortcutUntil: Date?
 
@@ -59,11 +61,16 @@ final class ClipboardMonitor {
         NSPasteboard.PasteboardType("NSStringPboardType")
     ]
 
-    func start(onAttachFromClipboard: @escaping Handler, onDebugLog: DebugLogHandler? = nil) {
+    func start(
+        onAttachFromClipboard: @escaping Handler,
+        onDebugLog: DebugLogHandler? = nil,
+        shouldBypassAttachDetection: @escaping BypassHandler = { false }
+    ) {
         guard self.onAttachFromClipboard == nil else { return }
 
         self.onAttachFromClipboard = onAttachFromClipboard
         self.onDebugLog = onDebugLog
+        self.shouldBypassAttachDetection = shouldBypassAttachDetection
         lastObservedPasteboardChangeCount = NSPasteboard.general.changeCount
         installCopyMonitors()
         startPasteboardWatchLoop()
@@ -76,6 +83,7 @@ final class ClipboardMonitor {
         removeCopyMonitors()
         onAttachFromClipboard = nil
         onDebugLog = nil
+        shouldBypassAttachDetection = { false }
         firstCopyChangeCount = nil
         firstCopyAt = nil
     }
@@ -239,7 +247,7 @@ final class ClipboardMonitor {
         pasteboardWatchTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: DoubleCopyConfig.pasteboardPollInterval)
-                await self?.checkPasteboardForChanges()
+                self?.checkPasteboardForChanges()
             }
         }
     }
@@ -264,6 +272,13 @@ final class ClipboardMonitor {
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
         guard changeCount != lastObservedPasteboardChangeCount else { return }
+
+        if shouldBypassAttachDetection() {
+            lastObservedPasteboardChangeCount = changeCount
+            firstCopyChangeCount = nil
+            firstCopyAt = nil
+            return
+        }
 
         lastObservedPasteboardChangeCount = changeCount
 

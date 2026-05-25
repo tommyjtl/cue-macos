@@ -95,6 +95,11 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.mode == .chat
     }
 
+    var isComposerInputFocused: Bool {
+        guard viewModel.mode == .chat, panel.isKeyWindow else { return false }
+        return composerTextField() != nil
+    }
+
     func show(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
         let previousApp = NSWorkspace.shared.frontmostApplication
 
@@ -304,10 +309,6 @@ final class ContextStackWindowController: NSWindowController {
                 guard let self else { return event }
                 guard self.panel.isVisible else { return event }
 
-                if let handled = self.handleChatComposerKeyEquivalent(event) {
-                    return handled
-                }
-
                 guard self.isEscapeKeyEvent(event) else { return event }
 
                 return self.handleEscapeRollback() ? nil : event
@@ -452,8 +453,9 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     nonisolated static func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
-        event.keyCode == 53
-            && event.modifierFlags.intersection(CaptureShortcut.modifierFlagsMask).isEmpty
+        let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        return event.keyCode == 53
+            && event.modifierFlags.intersection(modifierFlagsMask).isEmpty
     }
 
     private func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
@@ -548,29 +550,6 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    private func handleChatComposerKeyEquivalent(_ event: NSEvent) -> NSEvent? {
-        guard viewModel.mode == .chat, panel.isKeyWindow else {
-            return event
-        }
-
-        guard event.modifierFlags.contains(.command),
-              event.charactersIgnoringModifiers?.lowercased() == "a" else {
-            return event
-        }
-
-        if let textView = panel.firstResponder as? NSTextView {
-            textView.selectAll(nil)
-            return nil
-        }
-
-        if let textField = panel.firstResponder as? NSTextField {
-            textField.selectText(nil)
-            return nil
-        }
-
-        return event
-    }
-
     private func resignComposerInputFocus() {
         if let textField = composerTextField() ?? findComposerTextField(in: hostingView),
            textField.currentEditor() != nil {
@@ -629,7 +608,16 @@ private final class ContextStackPanel: NSPanel {
             return true
         }
 
-        return super.performKeyEquivalent(with: event)
+        if super.performKeyEquivalent(with: event) {
+            return true
+        }
+
+        if requiresInteractiveKeyboardInput,
+           ComposerEditShortcut.perform(with: event, sender: firstResponder) {
+            return true
+        }
+
+        return false
     }
 
     override func keyDown(with event: NSEvent) {
