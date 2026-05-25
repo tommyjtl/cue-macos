@@ -15,7 +15,7 @@ extension ContextItem {
         )
     }
 
-    nonisolated init(selectedTextSnapshot: SelectedTextManager.SelectionSnapshot, createdAt: Date = Date()) {
+    nonisolated init(selectedTextSnapshot: AttachedTextContext, createdAt: Date = Date()) {
         self.init(
             id: UUID(),
             type: .selectedText,
@@ -44,7 +44,7 @@ extension ContextItem {
 }
 
 extension ContextStack {
-    nonisolated init(screenshots: [CapturedScreenshot], selectedTextSnapshot: SelectedTextManager.SelectionSnapshot?) {
+    nonisolated init(screenshots: [CapturedScreenshot], selectedTextSnapshot: AttachedTextContext?) {
         let screenshotItems = screenshots.map { ContextItem(screenshot: $0) }
         let selectedTextItems = selectedTextSnapshot.map { [ContextItem(selectedTextSnapshot: $0)] } ?? []
         let items = screenshotItems + selectedTextItems

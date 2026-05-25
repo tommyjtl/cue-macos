@@ -116,11 +116,11 @@ final class PermissionManager {
         lastPermissionSettingsOpenedAt = Date()
     }
 
-    /// Screen Recording usually needs a new process after granting. Accessibility often updates live.
+    /// Screen Recording always needs a new process after granting. Accessibility usually does too after replacing the app binary.
     var needsRestartAfterPermissionChange: Bool {
         guard let lastPermissionSettingsOpenedAt else { return false }
         guard Date().timeIntervalSince(lastPermissionSettingsOpenedAt) < 600 else { return false }
-        return !hasScreenCapturePermission()
+        return !hasScreenCapturePermission() || !hasAccessibilityPermission()
     }
 
     enum LaunchContext: Equatable {
@@ -147,11 +147,21 @@ final class PermissionManager {
         LaunchContext.current(for: runningApplicationPath)
     }
 
+    var restartAfterPermissionChangeTitle: String {
+        if !hasScreenCapturePermission(), !hasAccessibilityPermission() {
+            return "Relaunch Cue to apply permissions"
+        }
+        if !hasScreenCapturePermission() {
+            return "Relaunch Cue to apply Screen Recording"
+        }
+        return "Relaunch Cue to apply Accessibility"
+    }
+
     var restartAfterPermissionChangeHint: String {
         switch launchContext {
         case .xcodeDebug:
             return """
-            Screen Recording applies on the next launch from Xcode — not via System Settings' "Quit & Reopen".
+            Permissions apply on the next launch from Xcode — not via System Settings' "Quit & Reopen".
 
             1. Stop Cue in Xcode (⌘. or ⌘Q)
             2. Press Run (⌘R)
@@ -172,6 +182,8 @@ final class PermissionManager {
             return """
             Quit Cue (⌘Q), then open it again from Applications.
 
+            If Accessibility still shows as off after relaunch, turn Cue off and on in System Settings → Accessibility, then quit and reopen once more.
+
             Running from:
             \(runningApplicationPath)
             """
@@ -191,7 +203,7 @@ final class PermissionManager {
             : "After enabling Screen Recording, quit Cue (⌘Q) and reopen it."
 
         return """
-        Click Enable… for each permission and turn on Cue.app in System Settings. Accessibility usually updates here immediately; Screen Recording needs a relaunch.
+        Click Enable… for each permission and turn on Cue.app in System Settings. After replacing Cue.app or enabling Accessibility, quit Cue (⌘Q) and reopen it — the System Settings toggle may look on before this app can use the permission.
 
         \(restartNote)
 
@@ -305,10 +317,11 @@ final class PermissionManager {
 
     func permissionDiagnosticsSummary() -> String {
         let ax = hasAccessibilityPermission()
+        let axCached = AXIsProcessTrusted()
         let axLive = AccessibilityClient.canCreateListenOnlyEventTap()
         let sr = hasScreenCapturePermission()
         let preflight = CGPreflightScreenCaptureAccess()
-        return "AX=\(ax) AXLive=\(axLive) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
+        return "AX=\(ax) AXCached=\(axCached) AXLive=\(axLive) SR=\(sr) CGPreflight=\(preflight) fingerprint=\(executableFingerprint())"
     }
 
     // MARK: - Private

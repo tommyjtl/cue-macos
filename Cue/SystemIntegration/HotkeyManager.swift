@@ -150,10 +150,10 @@ struct CaptureShortcut: Codable, Equatable {
 enum ShortcutFeatureCopy {
     static let openChatName = "Open Chat"
     static let openChatBinding = "Double Shift"
-    static let openChatSummary = "Opens the chat UI. If text is selected, Cue attaches it before opening the composer."
+    static let openChatSummary = "Opens the chat composer. With context already attached, starts a new chat; otherwise resumes your most recent conversation."
 
     static let addToContextName = "Add To Context"
-    static let addToContextSummary = "Double Option by default. Adds selected text to the context window when available, otherwise starts screenshot capture."
+    static let addToContextSummary = "Double Option by default. Starts a screenshot region capture and attaches it to the context window."
 }
 
 @MainActor
@@ -170,8 +170,6 @@ final class HotkeyManager {
     private var localKeyDownMonitor: Any?
     private var onTrigger: (() -> Void)?
     private var onConversationTrigger: (() -> Void)?
-    private var onDismissOverlayTrigger: (() -> Void)?
-    private var onPrefetchSelectedText: (() -> Void)?
     private var shortcut = CaptureShortcut.defaultValue
     private var lastModifierFlags: NSEvent.ModifierFlags = []
     private var isMonitoring = false
@@ -183,15 +181,11 @@ final class HotkeyManager {
     func startMonitoring(
         shortcut: CaptureShortcut,
         onTrigger: @escaping () -> Void,
-        onConversationTrigger: @escaping () -> Void,
-        onDismissOverlayTrigger: @escaping () -> Void,
-        onPrefetchSelectedText: (() -> Void)? = nil
+        onConversationTrigger: @escaping () -> Void
     ) {
         self.shortcut = shortcut.normalized
         self.onTrigger = onTrigger
         self.onConversationTrigger = onConversationTrigger
-        self.onDismissOverlayTrigger = onDismissOverlayTrigger
-        self.onPrefetchSelectedText = onPrefetchSelectedText
 
         guard !isMonitoring else { return }
         isMonitoring = true
@@ -300,11 +294,6 @@ final class HotkeyManager {
     }
 
     private func handleGlobalKeyDown(_ event: NSEvent) {
-        if event.keyCode == 53, filteredModifierFlags(from: event.modifierFlags).isEmpty {
-            onDismissOverlayTrigger?()
-            return
-        }
-
         guard shortcut.kind == .keyCombo else { return }
         guard !event.isARepeat else { return }
         guard event.keyCode == shortcut.keyCode else { return }
@@ -326,7 +315,6 @@ final class HotkeyManager {
 
         if currentFlags == targetModifier, !lastModifierFlags.contains(targetModifier) {
             bareCaptureModifierKeyDownAt = now
-            onPrefetchSelectedText?()
             return
         }
 
@@ -354,7 +342,6 @@ final class HotkeyManager {
 
         if currentFlags == [.shift], !lastModifierFlags.contains(.shift) {
             bareShiftKeyDownAt = now
-            onPrefetchSelectedText?()
             return
         }
 

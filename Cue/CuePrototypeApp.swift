@@ -18,6 +18,7 @@ final class AppModel {
             case screenshotCapture = "Screenshot Capture"
             case conversation = "Conversation"
             case persistence = "Persistence"
+            case clipboard = "Clipboard"
         }
 
         let id = UUID()
@@ -87,6 +88,7 @@ final class AppModel {
     @ObservationIgnored private var conversationCoordinator: ConversationCoordinator?
     @ObservationIgnored private var browserWebServer: BrowserWebServer?
     @ObservationIgnored private var permissionMonitor: PermissionMonitor?
+    @ObservationIgnored private var clipboardMonitor: ClipboardMonitor?
     private var hasStartedBackgroundServices = false
 
     // Observable permission state — updated from AppModel's stable monitoring tasks,
@@ -105,13 +107,15 @@ final class AppModel {
     var captureErrorMessage: String?
     var debugLogEntries: [DebugLogEntry] = []
     var capturedScreenshots: [CapturedScreenshot] = []
-    var selectedTextContexts: [SelectedTextManager.SelectionSnapshot] = []
+    var selectedTextContexts: [AttachedTextContext] = []
     var browserPageContexts: [BrowserPageContext] = []
     var conversationMessages: [ConversationMessageDTO] = []
     var savedConversations: [PersistedConversation] = []
     var selectedSavedConversationID: UUID?
     var isCaptureInProgress = false
     var isConversationInProgress = false
+    var isContextOverlayVisible = false
+    var isContextOverlayInChatMode = false
     let milestones: [Milestone] = [
         .init(title: "Menu Bar Utility", summary: "Primary entry point for opening the app and the first screenshot capture path."),
         .init(title: "Main Window", summary: "Conversation-focused workspace with a stable split-view layout."),
@@ -194,6 +198,9 @@ final class AppModel {
                 Task { @MainActor in
                     self?.removeContextItemFromOverlay(item)
                 }
+            },
+            onPresentationChange: { [weak self] in
+                self?.refreshOverlayPresentationState()
             }
         )
 
@@ -218,18 +225,31 @@ final class AppModel {
                 Task { @MainActor in
                     self?.beginContextConversation()
                 }
-            },
-            onDismissOverlayTrigger: { [weak self] in
-                Task { @MainActor in
-                    self?.handleOverlayEscapeRollback()
-                }
-            },
-            onPrefetchSelectedText: { [weak self] in
-                Task { @MainActor in
-                    self?.contextSession?.prefetchSelectedTextCapture()
-                }
             }
         )
+
+        let clipboardMonitor = ClipboardMonitor()
+        self.clipboardMonitor = clipboardMonitor
+        clipboardMonitor.start(
+            onAttachFromClipboard: { [weak self] text, sourceApp in
+                self?.handleExternalClipboardText(text, from: sourceApp)
+            },
+            onDebugLog: { [weak self] message in
+                self?.appendDebugLog(message, source: .clipboard)
+            }
+        )
+    }
+
+    private func handleExternalClipboardText(_ text: String, from sourceApp: NSRunningApplication?) {
+        guard contextSession?.attachClipboardText(text, frontmostApplication: sourceApp) == true else {
+            print("[AppModel] Clipboard text already attached — \(ClipboardMonitor.preview(text))")
+            return
+        }
+
+        buildStatus = "Clipboard text attached to context (double ⌘C)."
+        setCaptureErrorMessage(nil, source: .selectedText)
+        print("[AppModel] Attached clipboard text to context — \(ClipboardMonitor.describe(text))")
+        showContextStackNearCursor()
     }
 
     // MARK: - Permission Monitoring
@@ -263,17 +283,14 @@ final class AppModel {
         needsRestartForPermissions = newRestart
 
         hotkeyManager?.refreshAccessibilityDependentMonitors()
+        clipboardMonitor?.refreshAccessibilityDependentMonitors()
+        overlayCoordinator?.refreshAccessibilityDependentGlobalMonitors()
     }
 
     // MARK: - Capture
 
     private func handleCaptureShortcutTrigger() {
-        inspectSelectedTextForConversationTrigger(
-            presentChatAfterSelection: false,
-            onSelectionUnavailable: { [weak self] in
-                self?.beginScreenshotCapture()
-            }
-        )
+        beginScreenshotCapture()
     }
 
     func beginScreenshotCapture() {
@@ -304,6 +321,7 @@ final class AppModel {
         contextSession?.clear()
         conversationCoordinator?.clearSession()
         overlayCoordinator?.hide()
+        refreshOverlayPresentationState()
         buildStatus = "Context stack cleared."
     }
 
@@ -371,6 +389,7 @@ final class AppModel {
         // syncOverlayState is called synchronously via the coordinator callback,
         // so viewModel.messages is populated before showChat runs.
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Resumed \"\(mostRecent.title)\"."
     }
 
@@ -383,15 +402,25 @@ final class AppModel {
     }
 
     func dismissVisibleContextOverlayIfNeeded() {
-        handleOverlayEscapeRollback()
+        dismissVisibleOverlay()
     }
 
-    func handleOverlayEscapeRollback() {
+    func dismissVisibleOverlay() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
         overlayCoordinator?.handleEscapeRollback()
+        refreshOverlayPresentationState()
+    }
+
+    func handleOverlayEscapeRollback() {
+        dismissVisibleOverlay()
+    }
+
+    private func refreshOverlayPresentationState() {
+        isContextOverlayVisible = overlayCoordinator?.isVisible ?? false
+        isContextOverlayInChatMode = isContextOverlayVisible && (overlayCoordinator?.isInChatMode ?? false)
     }
 
     func showMainWindow() {
@@ -424,75 +453,11 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        guard hasContextItems else {
-            // No context in the panel yet. Check whether text is currently selected in
-            // the frontmost app WITHOUT attaching it — this avoids the ambiguous
-            // onSelectionUnavailable callback firing for AX glitches.
-            if contextSession?.hasCurrentlySelectedText() == true {
-                // Text is selected: attach it and open a new conversation.
-                inspectSelectedTextForConversationTrigger(
-                    presentChatAfterSelection: true,
-                    onSelectionUnavailable: { [weak self] in
-                        // AX read succeeded in the pre-check but failed in the attach call
-                        // (e.g. focus changed between the two calls). Keep the user on
-                        // a fresh composer path instead of unexpectedly resuming the
-                        // most recent saved conversation.
-                        self?.openFreshContextConversationComposer()
-                    },
-                    onSelectionAlreadyAttached: { [weak self] in
-                        // Same text is already in the current context, so this should
-                        // still begin a fresh context-backed session rather than resume
-                        // the last saved conversation.
-                        self?.openFreshContextConversationComposer()
-                    }
-                )
-            } else {
-                // Nothing selected and no context: resume the most recent conversation.
-                openMostRecentConversationChatIfAvailable()
-            }
-            return
+        if hasContextItems {
+            openFreshContextConversationComposer()
+        } else {
+            openMostRecentConversationChatIfAvailable()
         }
-
-        inspectSelectedTextForConversationTrigger(
-            presentChatAfterSelection: true,
-            onSelectionUnavailable: { [weak self] in
-                self?.openFreshContextConversationComposer()
-            },
-            onSelectionAlreadyAttached: { [weak self] in
-                self?.openFreshContextConversationComposer()
-            }
-        )
-    }
-
-    private func inspectSelectedTextForConversationTrigger(
-        presentChatAfterSelection: Bool,
-        onSelectionUnavailable: @escaping @MainActor () -> Void = {},
-        onSelectionAlreadyAttached: @escaping @MainActor () -> Void = {}
-    ) {
-        contextSession?.inspectSelectedTextForConversationTrigger(
-            setStatus: { [weak self] status in
-                self?.buildStatus = status
-            },
-            setError: { [weak self] message in
-                self?.setCaptureErrorMessage(message, source: .selectedText)
-            },
-            onSelectionUnavailable: onSelectionUnavailable,
-            onSelectionAlreadyAttached: onSelectionAlreadyAttached,
-            onSelectionReady: { [weak self] in
-                guard let self, !selectedTextContexts.isEmpty else {
-                    return
-                }
-
-                syncOverlayState()
-
-                if presentChatAfterSelection {
-                    openFreshContextConversationComposer()
-                } else {
-                    overlayCoordinator?.showStack(near: NSEvent.mouseLocation)
-                    buildStatus = "Selected text attached to the context window."
-                }
-            }
-        )
     }
 
     private func openFreshContextConversationComposer() {
@@ -500,12 +465,14 @@ final class AppModel {
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Context composer opened."
     }
 
     private func openContextConversationComposer() {
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
         buildStatus = "Context composer opened."
     }
 
@@ -572,6 +539,7 @@ final class AppModel {
     private func showContextStackNearCursor() {
         syncOverlayState()
         overlayCoordinator?.showStack(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
     }
 
     func resetCaptureShortcutToDefault() {
@@ -656,6 +624,19 @@ final class AppModel {
 
     func clearDebugLog() {
         debugLogEntries.removeAll()
+    }
+
+    func appendDebugLog(_ message: String, source: DebugLogEntry.Source) {
+        debugLogEntries.insert(
+            DebugLogEntry(timestamp: Date(), source: source, message: message),
+            at: 0
+        )
+
+        if debugLogEntries.count > 100 {
+            debugLogEntries.removeLast(debugLogEntries.count - 100)
+        }
+
+        print("[DebugLog][\(source.rawValue)] \(message)")
     }
 
     private func setCaptureErrorMessage(_ message: String?, source: DebugLogEntry.Source) {
@@ -871,7 +852,6 @@ struct CuePrototypeApp: App {
                 Button("Clear Context Stack") {
                     appState.clearContextStack()
                 }
-                .keyboardShortcut(.escape, modifiers: [])
                 .disabled(!appState.hasContextItems)
             }
 
@@ -905,6 +885,16 @@ private struct MenuBarContentView: View {
     var body: some View {
         Button("Open App") {
             appState.showMainWindow()
+        }
+
+        if appState.isContextOverlayInChatMode {
+            Button("Dismiss Chat UI") {
+                appState.dismissVisibleOverlay()
+            }
+        } else if appState.isContextOverlayVisible {
+            Button("Dismiss Context") {
+                appState.dismissVisibleOverlay()
+            }
         }
 
         Divider()

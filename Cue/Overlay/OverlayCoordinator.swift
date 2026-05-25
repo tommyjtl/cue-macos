@@ -5,7 +5,7 @@ import Foundation
 final class OverlayCoordinator {
     struct Snapshot {
         var screenshots: [CapturedScreenshot] = []
-        var selectedTextContexts: [SelectedTextManager.SelectionSnapshot] = []
+        var selectedTextContexts: [AttachedTextContext] = []
         var browserPageContexts: [BrowserPageContext] = []
         var messages: [ConversationMessageDTO] = []
         var isSending = false
@@ -27,7 +27,8 @@ final class OverlayCoordinator {
         onSendDraft: @escaping (String) -> Void,
         onLoadMostRecent: @escaping () -> Void,
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
-        onRemoveContextItem: @escaping (ContextPreviewItem) -> Void
+        onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
+        onPresentationChange: @escaping () -> Void
     ) {
         windowController = ContextStackWindowController(
             onClear: onClear,
@@ -37,12 +38,17 @@ final class OverlayCoordinator {
             onSendDraft: onSendDraft,
             onLoadMostRecent: onLoadMostRecent,
             onSetWebSearchEnabled: onSetWebSearchEnabled,
-            onRemoveContextItem: onRemoveContextItem
+            onRemoveContextItem: onRemoveContextItem,
+            onPresentationChange: onPresentationChange
         )
     }
 
     var isVisible: Bool {
         windowController.isVisible
+    }
+
+    var isInChatMode: Bool {
+        windowController.isInChatMode
     }
 
     func update(snapshot: Snapshot) {
@@ -87,5 +93,9 @@ final class OverlayCoordinator {
 
     func handleEscapeRollback() {
         windowController.handleEscapeRollback()
+    }
+
+    func refreshAccessibilityDependentGlobalMonitors() {
+        windowController.refreshAccessibilityDependentGlobalMonitors()
     }
 }

@@ -204,13 +204,13 @@ private struct DebugWorkspaceView: View {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
                 SettingsPageHeader(
                     title: "Debug",
-                    subtitle: "Runtime errors and fallback diagnostics collected from the current app session."
+                    subtitle: "Session log for errors and clipboard attach diagnostics."
                 )
 
                 SettingsCard {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("Error Log")
+                            Text("Log")
                                 .font(.system(size: 15, weight: .semibold))
 
                             Spacer()
@@ -224,7 +224,7 @@ private struct DebugWorkspaceView: View {
                         .padding(.top, SettingsLayout.rowVerticalPadding)
 
                         if appState.debugLogEntries.isEmpty {
-                            Text("No errors logged in this session yet.")
+                            Text("No log entries in this session yet.")
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
@@ -339,7 +339,7 @@ private struct PermissionsSettingsSection: View {
                 )
             } else if appState.needsRestartForPermissions {
                 PermissionHelpCallout(
-                    title: "Relaunch Cue to apply Screen Recording",
+                    title: permissionManager.restartAfterPermissionChangeTitle,
                     message: permissionManager.restartAfterPermissionChangeHint,
                     showsQuitButton: true
                 )
@@ -378,7 +378,7 @@ private struct PermissionsSettingsSection: View {
         case .screenRecording:
             return "Enable Screen Recording for Cue.app, then relaunch Cue"
         case .accessibility:
-            return "Enable Accessibility for Cue.app in System Settings"
+            return "Enable Accessibility for Cue.app in System Settings, then relaunch Cue"
         }
     }
 
