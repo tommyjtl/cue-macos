@@ -89,6 +89,20 @@ struct SystemIntegrationTests {
         #expect(tooLate.nextFirstCopyAt == now + 0.6)
     }
 
+    @Test func composerEditShortcutMatchesStandardEditCommands() {
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "c", modifiers: [.command])) == #selector(NSText.copy(_:)))
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "v", modifiers: [.command])) == #selector(NSText.paste(_:)))
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "z", modifiers: [.command])) == Selector(("undo:")))
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "z", modifiers: [.command, .shift])) == Selector(("redo:")))
+    }
+
+    @Test func composerEditShortcutIgnoresModifiedEditCommands() {
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "c", modifiers: [.command, .option])) == nil)
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "v", modifiers: [.command, .option])) == nil)
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "z", modifiers: [.command, .control])) == nil)
+        #expect(ComposerEditShortcut.selector(for: makeKeyEvent(characters: "z", modifiers: [.command, .option, .shift])) == nil)
+    }
+
     @Test func isCopyKeyDownMatchesCharacterEvenWithDifferentKeyCode() {
         let event = NSEvent.keyEvent(
             with: .keyDown,
@@ -151,6 +165,21 @@ struct SystemIntegrationTests {
         #expect(diagnostic.plainTextPreview == nil)
         #expect(diagnostic.readFailureReason == "no supported plain-text type")
         #expect(diagnostic.typeLabels.contains("com.example.binary"))
+    }
+
+    private func makeKeyEvent(characters: String, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifiers,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: 0
+        )!
     }
 
     private func makePasteboard(string: String) -> NSPasteboard {
