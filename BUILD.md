@@ -93,5 +93,5 @@ Maintainers: see [docs/RELEASE.md](./docs/RELEASE.md) for automated releases.
 To send the current web page as context from Chrome, Arc, Brave, or Edge:
 
 1. Enable **Developer mode** on your browser's extensions page
-2. Install the extension from **[cue-chromium-extension](https://github.com/tommyjtl/cue-chromium-extension)** (releases will be published there; repo migration in progress)
+2. Install the extension from **[cue-chromium-extension](https://github.com/tommyjtl/cue-chromium-extension)** (load unpacked from the repo; see its README)
 3. Keep **Cue running** — the app listens on `127.0.0.1:52473` for page payloads from the extension
