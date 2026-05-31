@@ -34,6 +34,8 @@ final class ContextStackWindowController: NSWindowController {
     private var cursorEnteredPanelAt: CFTimeInterval?
     private var lastEscapeRollbackAt: CFTimeInterval?
     private var placementAnchor: NSPoint?
+    private var chatPanelManuallyPositioned = false
+    private var panelDragObserver: NSObjectProtocol?
 
     init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void, onPresentationChange: @escaping () -> Void) {
         self.onClear = onClear
@@ -73,12 +75,16 @@ final class ContextStackWindowController: NSWindowController {
         }
         setPanelInteractionMode(for: .stack)
         installApplicationLifecycleObserver()
+        installPanelDragObserver()
         refreshRootView()
         installEscapeMonitorsIfNeeded()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self, name: NSApplication.didResignActiveNotification, object: nil)
+        if let panelDragObserver {
+            NotificationCenter.default.removeObserver(panelDragObserver)
+        }
     }
 
     @available(*, unavailable)
@@ -185,6 +191,7 @@ final class ContextStackWindowController: NSWindowController {
         stopFollowingCursor()
         cursorEnteredPanelAt = nil
         placementAnchor = nil
+        chatPanelManuallyPositioned = false
         viewModel.mode = .stack
         viewModel.draftMessage = "" 
         viewModel.messages = []
@@ -382,6 +389,16 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
+    private func installPanelDragObserver() {
+        panelDragObserver = NotificationCenter.default.addObserver(
+            forName: .overlayPanelUserDidDrag,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            self?.chatPanelManuallyPositioned = true
+        }
+    }
+
     private func scheduleDeferredRelayout() {
         DispatchQueue.main.async { [weak self] in
             self?.applyPlacement()
@@ -391,15 +408,29 @@ final class ContextStackWindowController: NSWindowController {
     private func applyPlacement(anchor: NSPoint? = nil) {
         if let anchor {
             placementAnchor = anchor
-        }
-
-        guard let placementAnchor else {
-            return
+            chatPanelManuallyPositioned = false
         }
 
         hostingView.layoutSubtreeIfNeeded()
         let size = measuredPanelSize()
-        let origin = OverlayPlacement.clampedOrigin(for: size, near: placementAnchor)
+
+        let origin: NSPoint
+        if viewModel.mode == .chat, chatPanelManuallyPositioned {
+            let proposedOrigin = NSPoint(
+                x: panel.frame.origin.x,
+                y: panel.frame.maxY - size.height
+            )
+            origin = OverlayPlacement.clampedOriginPreservingUserPosition(
+                proposedOrigin: proposedOrigin,
+                size: size
+            )
+        } else {
+            guard let placementAnchor else {
+                return
+            }
+            origin = OverlayPlacement.clampedOrigin(for: size, near: placementAnchor)
+        }
+
         let nextFrame = NSRect(origin: origin, size: size)
 
         guard !framesAreApproximatelyEqual(panel.frame, nextFrame) else {

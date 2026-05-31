@@ -36,4 +36,25 @@ enum OverlayPlacement {
 
         return origin
     }
+
+    static func clampedOriginPreservingUserPosition(proposedOrigin: NSPoint, size: NSSize) -> NSPoint {
+        let referencePoint = NSPoint(
+            x: proposedOrigin.x + size.width / 2,
+            y: proposedOrigin.y + size.height / 2
+        )
+        let placementFrame = ScreenLocator.target(containing: referencePoint)?.placementFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+
+        var origin = proposedOrigin
+        origin.x = min(
+            max(origin.x, placementFrame.minX + Layout.screenEdgeInset),
+            placementFrame.maxX - size.width - Layout.screenEdgeInset
+        )
+        origin.y = min(
+            max(origin.y, placementFrame.minY + Layout.screenEdgeInset),
+            placementFrame.maxY - size.height - Layout.screenEdgeInset
+        )
+        return origin
+    }
 }
