@@ -172,10 +172,8 @@ private struct OllamaConversationClient: StreamingConversationProviderClient {
             )
         )
 
-        for index in request.messages.indices {
-            let message = request.messages[index]
-            let isLatestUserMessage = index == request.messages.indices.last && message.role == .user
-            let encodedImages = isLatestUserMessage ? request.attachments.map { $0.data.base64EncodedString() } : []
+        for message in request.messages {
+            let encodedImages = request.attachments(for: message.id).map { $0.data.base64EncodedString() }
 
             messages.append(
                 OllamaChatMessage(
@@ -605,17 +603,17 @@ private struct OpenAIConversationClient: StreamingConversationProviderClient {
         var messages: [OpenAIChatMessage] = []
         messages.append(OpenAIChatMessage(role: "system", content: [.text(request.systemPrompt)]))
 
-        for index in request.messages.indices {
-            let message = request.messages[index]
+        for message in request.messages {
+            let messageAttachments = request.attachments(for: message.id)
 
-            if index == request.messages.indices.last, message.role == .user {
+            if messageAttachments.isEmpty {
+                messages.append(OpenAIChatMessage(role: message.role.rawValue, content: [.text(message.text)]))
+            } else {
                 var content: [OpenAIChatContent] = [.text(message.text)]
-                content.append(contentsOf: request.attachments.map { attachment in
+                content.append(contentsOf: messageAttachments.map { attachment in
                     .imageURL("data:\(attachment.mimeType);base64,\(attachment.data.base64EncodedString())")
                 })
                 messages.append(OpenAIChatMessage(role: message.role.rawValue, content: content))
-            } else {
-                messages.append(OpenAIChatMessage(role: message.role.rawValue, content: [.text(message.text)]))
             }
         }
 
@@ -686,19 +684,15 @@ private struct OpenAIConversationClient: StreamingConversationProviderClient {
     private func buildResponsesInput(from request: ConversationRequestDTO) -> [OpenAIResponsesInputMessage] {
         var input: [OpenAIResponsesInputMessage] = []
 
-        for index in request.messages.indices {
-            let message = request.messages[index]
-            let isLatestUserMessage = index == request.messages.indices.last && message.role == .user
+        for message in request.messages {
             let textContent: OpenAIResponsesInputContent = message.role == .assistant
                 ? .outputText(message.text)
                 : .inputText(message.text)
             var content: [OpenAIResponsesInputContent] = [textContent]
 
-            if isLatestUserMessage {
-                content.append(contentsOf: request.attachments.map { attachment in
-                    .inputImage("data:\(attachment.mimeType);base64,\(attachment.data.base64EncodedString())")
-                })
-            }
+            content.append(contentsOf: request.attachments(for: message.id).map { attachment in
+                .inputImage("data:\(attachment.mimeType);base64,\(attachment.data.base64EncodedString())")
+            })
 
             let role: String = switch message.role {
             case .system:

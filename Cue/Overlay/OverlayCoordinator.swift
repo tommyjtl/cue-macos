@@ -55,6 +55,10 @@ final class OverlayCoordinator {
         windowController.isComposerInputFocused
     }
 
+    func relayout() {
+        windowController.relayout()
+    }
+
     func update(snapshot: Snapshot) {
         self.snapshot = snapshot
         windowController.updateContext(

@@ -140,8 +140,9 @@ struct ContextStackView: View {
                         .font(ComposerLayout.controlFont)
                         .foregroundStyle(.secondary)
                 }
-
-                Spacer(minLength: 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .overlay(WindowDragArea())
 
                 Button {
                     onCloseChat()
@@ -153,12 +154,11 @@ struct ContextStackView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close composer")
             }
-            .background(WindowDragArea())
 
             Color.clear
                 .frame(height: 18)
                 .contentShape(Rectangle())
-                .background(WindowDragArea())
+                .overlay(WindowDragArea())
 
             transcriptContent
 
@@ -1010,13 +1010,47 @@ private final class FirstMouseTextField: NSTextField {
 
 // MARK: - Window drag handle
 
+extension Notification.Name {
+    static let overlayPanelUserDidDrag = Notification.Name("cue.overlayPanelUserDidDrag")
+}
+
 private struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragHandleView { DragHandleView() }
     func updateNSView(_ nsView: DragHandleView, context: Context) {}
 }
 
 private final class DragHandleView: NSView {
+    override var isFlipped: Bool { true }
+
+    private var isDragging = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func layout() {
+        super.layout()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: isDragging ? .closedHand : .openHand)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        isDragging = true
+        window?.invalidateCursorRects(for: self)
+        NSCursor.closedHand.set()
+
         window?.performDrag(with: event)
+
+        isDragging = false
+        window?.invalidateCursorRects(for: self)
+        NSCursor.openHand.set()
+
+        if let window {
+            NotificationCenter.default.post(name: .overlayPanelUserDidDrag, object: window)
+        }
     }
 }

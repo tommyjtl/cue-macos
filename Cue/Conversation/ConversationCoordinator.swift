@@ -12,6 +12,7 @@ final class ConversationCoordinator {
 
     private let conversationService: ConversationService
     private let conversationStore: ConversationStore?
+    private let messageAttachmentStore: MessageAttachmentStore
     private let onSessionChange: @MainActor (SessionSnapshot) -> Void
 
     private var conversationTask: Task<Void, Never>?
@@ -20,10 +21,12 @@ final class ConversationCoordinator {
     init(
         conversationService: ConversationService? = nil,
         conversationStore: ConversationStore?,
+        messageAttachmentStore: MessageAttachmentStore = MessageAttachmentStore(),
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
         self.conversationStore = conversationStore
+        self.messageAttachmentStore = messageAttachmentStore
         self.onSessionChange = onSessionChange
         publishSession()
     }
@@ -110,10 +113,30 @@ final class ConversationCoordinator {
             page.pageTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? page.url : page.pageTitle
         })
 
-        let userMessage = ConversationMessageDTO(role: .user, text: trimmedDraft, attachedContextLabels: contextLabels)
+        let conversationID = ensureActiveConversationID()
+        let userMessageID = UUID()
+
+        let imageAttachments: [ConversationImageAttachmentReference]
+        do {
+            imageAttachments = try messageAttachmentStore.saveImages(
+                from: screenshots,
+                conversationID: conversationID,
+                messageID: userMessageID
+            )
+        } catch {
+            setError(error.localizedDescription)
+            return
+        }
+
+        let userMessage = ConversationMessageDTO(
+            id: userMessageID,
+            role: .user,
+            text: trimmedDraft,
+            attachedContextLabels: contextLabels,
+            imageAttachments: imageAttachments
+        )
         let requestMessages = contextualMessages(for: selectedTextContexts, browserPages: browserPageContexts) + session.messages + [userMessage]
         let streamingAssistantMessageID = UUID()
-        let conversationID = ensureActiveConversationID()
 
         session.messages.append(userMessage)
         session.messages.append(
@@ -143,14 +166,14 @@ final class ConversationCoordinator {
             }
 
             do {
-                let attachments = try loadConversationAttachments(from: screenshots)
+                let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: requestMessages)
                 let request = ConversationRequestDTO(
                     systemPrompt: conversationSystemPrompt(
                         for: configuration,
-                        hasAttachments: !attachments.isEmpty
+                        hasAttachments: !messageAttachments.isEmpty
                     ),
                     messages: requestMessages,
-                    attachments: attachments
+                    messageAttachments: messageAttachments
                 )
 
                 let response = try await conversationService.streamResponse(
@@ -246,13 +269,6 @@ final class ConversationCoordinator {
         return messages
     }
 
-    private func loadConversationAttachments(from screenshots: [CapturedScreenshot]) throws -> [ConversationImageAttachmentDTO] {
-        try screenshots.map { screenshot in
-            let data = try Data(contentsOf: screenshot.fileURL)
-            return ConversationImageAttachmentDTO(mimeType: "image/png", data: data)
-        }
-    }
-
     private func appendAssistantDelta(
         _ delta: String,
         to messageID: UUID,
@@ -271,7 +287,9 @@ final class ConversationCoordinator {
             id: existingMessage.id,
             role: existingMessage.role,
             text: existingMessage.text + delta,
-            processBlocks: existingMessage.processBlocks
+            processBlocks: existingMessage.processBlocks,
+            attachedContextLabels: existingMessage.attachedContextLabels,
+            imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         publishSession()
@@ -311,7 +329,9 @@ final class ConversationCoordinator {
             id: existingMessage.id,
             role: existingMessage.role,
             text: existingMessage.text,
-            processBlocks: updatedProcessBlocks
+            processBlocks: updatedProcessBlocks,
+            attachedContextLabels: existingMessage.attachedContextLabels,
+            imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         publishSession()
@@ -347,7 +367,9 @@ final class ConversationCoordinator {
             id: existingMessage.id,
             role: existingMessage.role,
             text: existingMessage.text,
-            processBlocks: updatedProcessBlocks
+            processBlocks: updatedProcessBlocks,
+            attachedContextLabels: existingMessage.attachedContextLabels,
+            imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         publishSession()
@@ -370,7 +392,9 @@ final class ConversationCoordinator {
             id: existingMessage.id,
             role: existingMessage.role,
             text: existingMessage.text,
-            processBlocks: existingMessage.processBlocks + [block]
+            processBlocks: existingMessage.processBlocks + [block],
+            attachedContextLabels: existingMessage.attachedContextLabels,
+            imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         publishSession()
@@ -388,7 +412,9 @@ final class ConversationCoordinator {
                 id: id,
                 role: message.role,
                 text: message.text,
-                processBlocks: message.processBlocks
+                processBlocks: message.processBlocks,
+                attachedContextLabels: session.messages[index].attachedContextLabels,
+                imageAttachments: session.messages[index].imageAttachments
             )
         } else {
             session.messages.append(message)

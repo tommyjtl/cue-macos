@@ -381,6 +381,7 @@ final class AppModel {
             buildStatus = "Loaded \(conversation.title) into the overlay."
         }
         syncOverlayState()
+        overlayCoordinator?.relayout()
     }
 
     private func openMostRecentConversationChatIfAvailable() {
