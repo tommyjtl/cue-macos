@@ -209,6 +209,7 @@ struct ConversationMessageDTO: Identifiable, Equatable {
     let text: String
     let processBlocks: [ConversationProcessBlockDTO]
     let attachedContextLabels: [String]
+    let imageAttachments: [ConversationImageAttachmentReference]
 
     nonisolated init(
         id: UUID = UUID(),
@@ -217,12 +218,14 @@ struct ConversationMessageDTO: Identifiable, Equatable {
         thinkingText: String? = nil,
         isThinkingComplete: Bool = true,
         processBlocks: [ConversationProcessBlockDTO] = [],
-        attachedContextLabels: [String] = []
+        attachedContextLabels: [String] = [],
+        imageAttachments: [ConversationImageAttachmentReference] = []
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.attachedContextLabels = attachedContextLabels
+        self.imageAttachments = imageAttachments
         if processBlocks.isEmpty, let thinkingText = thinkingText?.nilIfBlank {
             self.processBlocks = [ConversationProcessBlockDTO(kind: .thinking, text: thinkingText, isComplete: isThinkingComplete)]
         } else {
@@ -266,7 +269,15 @@ struct ConversationImageAttachmentDTO {
 struct ConversationRequestDTO {
     let systemPrompt: String
     let messages: [ConversationMessageDTO]
-    let attachments: [ConversationImageAttachmentDTO]
+    let messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
+
+    var hasAnyAttachments: Bool {
+        messageAttachments.values.contains { !$0.isEmpty }
+    }
+
+    func attachments(for messageID: UUID) -> [ConversationImageAttachmentDTO] {
+        messageAttachments[messageID] ?? []
+    }
 }
 
 struct ConversationResponseDTO {

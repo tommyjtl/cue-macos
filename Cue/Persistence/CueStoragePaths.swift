@@ -28,6 +28,10 @@ enum CueStoragePaths {
         try cueRootDirectory().appendingPathComponent("screenshots", isDirectory: true)
     }
 
+    static func conversationAttachmentsDirectory() throws -> URL {
+        try cueRootDirectory().appendingPathComponent("conversation-attachments", isDirectory: true)
+    }
+
     static func ensureParentDirectoryExists(for fileURL: URL) throws {
         let parentDirectory = fileURL.deletingLastPathComponent()
         try ensureDirectoryExists(at: parentDirectory)

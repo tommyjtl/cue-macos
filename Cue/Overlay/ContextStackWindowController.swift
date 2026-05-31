@@ -7,8 +7,6 @@ final class ContextStackWindowController: NSWindowController {
     private enum Layout {
         static let chatMinimumWidth: CGFloat = 360
         static let stackPanelSide: CGFloat = 280
-        static let cursorOffset: CGFloat = 0
-        static let screenEdgeInset: CGFloat = 12
     }
 
     private enum MotionMode {
@@ -35,6 +33,7 @@ final class ContextStackWindowController: NSWindowController {
     private var globalMouseDownMonitor: Any?
     private var cursorEnteredPanelAt: CFTimeInterval?
     private var lastEscapeRollbackAt: CFTimeInterval?
+    private var placementAnchor: NSPoint?
 
     init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void, onPresentationChange: @escaping () -> Void) {
         self.onClear = onClear
@@ -112,10 +111,14 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.mode = .stack
         setPanelInteractionMode(for: .stack)
         cursorEnteredPanelAt = nil
-        panel.setFrameOrigin(clampedOrigin(for: panel.frame.size, near: point))
+        applyPlacement(anchor: point)
         presentStackPanelWithoutActivatingApp(revertingTo: previousApp)
         startFollowingCursor()
         notifyPresentationChange()
+    }
+
+    func relayout() {
+        applyPlacement()
     }
 
     func showChat(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
@@ -128,15 +131,13 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.browserPageContexts = browserPageContexts
         viewModel.mode = .chat
         setPanelInteractionMode(for: .chat)
-        refreshPanelSize()
         cursorEnteredPanelAt = nil
-
-        panel.setFrameOrigin(clampedOrigin(for: panel.frame.size, near: point))
+        stopFollowingCursor()
+        applyPlacement(anchor: point)
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         requestComposerFocus()
-        startFollowingCursor()
         SoundEffectPlayer.play(.chatOpened)
         notifyPresentationChange()
     }
@@ -159,7 +160,9 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.screenshots = screenshots
         viewModel.selectedTextContexts = selectedTextContexts
         viewModel.browserPageContexts = browserPageContexts
-        refreshPanelSize()
+        if panel.isVisible {
+            applyPlacement()
+        }
     }
 
     func updateConversation(messages: [ConversationMessageDTO], isSending: Bool, canCancelSend: Bool, providerDisplayName: String, hasSavedConversations: Bool, supportsWebSearch: Bool, isWebSearchEnabled: Bool) {
@@ -170,12 +173,18 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.hasSavedConversations = hasSavedConversations
         viewModel.supportsWebSearch = supportsWebSearch
         viewModel.isWebSearchEnabled = isWebSearchEnabled
-        refreshPanelSize()
+        if panel.isVisible {
+            applyPlacement()
+            if viewModel.mode == .chat {
+                scheduleDeferredRelayout()
+            }
+        }
     }
 
     func hide() {
         stopFollowingCursor()
         cursorEnteredPanelAt = nil
+        placementAnchor = nil
         viewModel.mode = .stack
         viewModel.draftMessage = "" 
         viewModel.messages = []
@@ -193,6 +202,10 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     private func startFollowingCursor() {
+        guard viewModel.mode == .stack else {
+            return
+        }
+
         guard displayLink == nil else {
             return
         }
@@ -241,12 +254,10 @@ final class ContextStackWindowController: NSWindowController {
 
         let now = CFAbsoluteTimeGetCurrent()
         let mouseLocation = NSEvent.mouseLocation
+        placementAnchor = mouseLocation
 
         let motionMode = resolveMotionMode(cursorLocation: mouseLocation, now: now)
-        // Temporarily keep following even while the cursor is over the panel.
-        // guard motionMode != .interacting else { return }
-
-        let targetOrigin = clampedOrigin(for: panel.frame.size, near: mouseLocation)
+        let targetOrigin = OverlayPlacement.clampedOrigin(for: panel.frame.size, near: mouseLocation)
         guard abs(panel.frame.origin.x - targetOrigin.x) > 1 || abs(panel.frame.origin.y - targetOrigin.y) > 1 else {
             return
         }
@@ -371,36 +382,54 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    private func clampedOrigin(for size: NSSize, near point: NSPoint) -> NSPoint {
-        let placementFrame = ScreenLocator.target(containing: point)?.placementFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+    private func scheduleDeferredRelayout() {
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPlacement()
+        }
+    }
 
-        // Prefer placing to the right of the cursor; flip to the left if it would overflow the right edge.
-        let rightOriginX = point.x + Layout.cursorOffset
-        let leftOriginX = point.x - size.width - Layout.cursorOffset
-        let fitsOnRight = rightOriginX + size.width <= placementFrame.maxX - Layout.screenEdgeInset
+    private func applyPlacement(anchor: NSPoint? = nil) {
+        if let anchor {
+            placementAnchor = anchor
+        }
 
-        var origin = NSPoint(
-            x: fitsOnRight ? rightOriginX : leftOriginX,
-            y: point.y - size.height - Layout.cursorOffset
-        )
+        guard let placementAnchor else {
+            return
+        }
 
-        // Vertical: if panel goes below screen, place above cursor.
-        if origin.y < placementFrame.minY {
-            origin.y = min(
-                point.y + Layout.cursorOffset,
-                placementFrame.maxY - size.height - Layout.screenEdgeInset
+        hostingView.layoutSubtreeIfNeeded()
+        let size = measuredPanelSize()
+        let origin = OverlayPlacement.clampedOrigin(for: size, near: placementAnchor)
+        let nextFrame = NSRect(origin: origin, size: size)
+
+        guard !framesAreApproximatelyEqual(panel.frame, nextFrame) else {
+            return
+        }
+
+        panel.setFrame(nextFrame, display: true)
+    }
+
+    private func measuredPanelSize() -> NSSize {
+        if viewModel.mode == .chat {
+            let fittingSize = hostingView.fittingSize
+            let screenHeight = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900
+            let maxPanelHeight = screenHeight * 0.65
+            return NSSize(
+                width: max(Layout.chatMinimumWidth, fittingSize.width),
+                height: min(max(120, fittingSize.height), maxPanelHeight)
             )
         }
 
-        // Final clamp to keep panel fully within the screen on all edges.
-        origin.x = max(origin.x, placementFrame.minX + Layout.screenEdgeInset)
-        origin.y = min(
-            max(origin.y, placementFrame.minY + Layout.screenEdgeInset),
-            placementFrame.maxY - size.height - Layout.screenEdgeInset
-        )
-
-        return origin
+        return NSSize(width: Layout.stackPanelSide, height: Layout.stackPanelSide)
     }
+
+    private func framesAreApproximatelyEqual(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) <= 1
+            && abs(lhs.origin.y - rhs.origin.y) <= 1
+            && abs(lhs.size.width - rhs.size.width) <= 1
+            && abs(lhs.size.height - rhs.size.height) <= 1
+    }
+
     private func refreshRootView() {
         hostingView.rootView = ContextStackView(
             model: viewModel,
@@ -466,37 +495,6 @@ final class ContextStackWindowController: NSWindowController {
         onPresentationChange()
     }
 
-    private func refreshPanelSize() {
-        hostingView.layoutSubtreeIfNeeded()
-        let frame = panel.frame
-        let size: NSSize
-
-        if viewModel.mode == .chat {
-            let fittingSize = hostingView.fittingSize
-            let screenHeight = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900
-            let maxPanelHeight = screenHeight * 0.65
-            size = NSSize(
-                width: max(Layout.chatMinimumWidth, fittingSize.width),
-                height: min(max(120, fittingSize.height), maxPanelHeight)
-            )
-        } else {
-            size = NSSize(width: Layout.stackPanelSide, height: Layout.stackPanelSide)
-        }
-
-        // Anchor to the top edge so the panel expands downward when growing.
-        let origin = viewModel.mode == .chat
-            ? NSPoint(x: frame.origin.x, y: frame.maxY - size.height)
-            : frame.origin
-
-        let nextFrame = NSRect(origin: origin, size: size)
-        let sizeChanged = abs(panel.frame.width - size.width) > 1 || abs(panel.frame.height - size.height) > 1
-        guard sizeChanged || panel.frame.origin != origin else {
-            return
-        }
-
-        panel.setFrame(nextFrame, display: true)
-    }
-
     private func setPanelInteractionMode(for mode: ContextPanelViewModel.Mode) {
         switch mode {
         case .chat:
@@ -526,7 +524,8 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.mode = .stack
         viewModel.draftMessage = ""
         setPanelInteractionMode(for: .stack)
-        refreshPanelSize()
+        applyPlacement()
+        startFollowingCursor()
         notifyPresentationChange()
     }
 

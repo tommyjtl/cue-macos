@@ -95,6 +95,18 @@ extension Message {
             )
         }
 
+        let imageStartIndex = parts.count
+        for (index, attachment) in dto.imageAttachments.enumerated() {
+            parts.append(
+                MessagePart(
+                    type: .image,
+                    sortIndex: imageStartIndex + index,
+                    textContent: attachment.relativePath,
+                    assetID: attachment.id
+                )
+            )
+        }
+
         parts.append(MessagePart(type: .text, sortIndex: parts.count, textContent: dto.text))
 
         self.init(
@@ -162,11 +174,28 @@ extension Message {
 
 extension ConversationMessageDTO {
     nonisolated init(message: Message) {
+        let imageAttachments = message.parts
+            .sorted { $0.sortIndex < $1.sortIndex }
+            .compactMap { part -> ConversationImageAttachmentReference? in
+                guard part.type == .image,
+                      let relativePath = part.textContent,
+                      let assetID = part.assetID else {
+                    return nil
+                }
+
+                return ConversationImageAttachmentReference(
+                    id: assetID,
+                    mimeType: "image/png",
+                    relativePath: relativePath
+                )
+            }
+
         self.init(
             id: message.id,
             role: ConversationMessageDTO.Role(message.role),
             text: message.flattenedText,
-            processBlocks: message.orderedProcessBlocks
+            processBlocks: message.orderedProcessBlocks,
+            imageAttachments: imageAttachments
         )
     }
 }

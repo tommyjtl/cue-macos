@@ -93,6 +93,7 @@ final class MessageRepository {
         var currentRole: ConversationMessageDTO.Role?
         var currentText = ""
         var currentProcessBlocks: [ConversationProcessBlockDTO] = []
+        var currentImageAttachments: [ConversationImageAttachmentReference] = []
 
         func flushCurrentMessage() {
             guard let currentMessageID, let currentRole else {
@@ -104,7 +105,8 @@ final class MessageRepository {
                     id: currentMessageID,
                     role: currentRole,
                     text: currentText,
-                    processBlocks: currentProcessBlocks
+                    processBlocks: currentProcessBlocks,
+                    imageAttachments: currentImageAttachments
                 )
             )
         }
@@ -122,6 +124,7 @@ final class MessageRepository {
                 currentRole = role
                 currentText = ""
                 currentProcessBlocks = []
+                currentImageAttachments = []
             }
 
             let partType = SQLiteRepositorySupport.string(at: 2, in: statement) ?? "text"
@@ -134,6 +137,10 @@ final class MessageRepository {
                 currentProcessBlocks.append(ConversationProcessBlockDTO(kind: .webSearch, text: partText))
             case ConversationProcessBlockDTO.Kind.webFetch.rawValue:
                 currentProcessBlocks.append(ConversationProcessBlockDTO(kind: .webFetch, text: partText))
+            case "image":
+                if let attachment = ConversationImageAttachmentReference.deserialized(from: partText) {
+                    currentImageAttachments.append(attachment)
+                }
             case "text":
                 currentText += partText
             default:
@@ -174,6 +181,14 @@ final class MessageRepository {
         var partDefinitions: [(type: String, sortIndex: Int, text: String)] = message.processBlocks.enumerated().map { index, block in
             (type: block.kind.rawValue, sortIndex: index, text: block.text)
         }
+
+        let imageStartIndex = partDefinitions.count
+        partDefinitions.append(contentsOf: message.imageAttachments.enumerated().compactMap { index, attachment in
+            guard let serialized = try? attachment.serialized() else {
+                return nil
+            }
+            return (type: "image", sortIndex: imageStartIndex + index, text: serialized)
+        })
         partDefinitions.append((type: "text", sortIndex: partDefinitions.count, text: message.text))
 
         let partSQL = """
