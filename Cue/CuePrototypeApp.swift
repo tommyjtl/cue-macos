@@ -30,6 +30,7 @@ final class AppModel {
     private enum UserDefaultsKey {
         static let captureShortcut = "capture-shortcut"
         static let conversationConfiguration = "conversation-configuration"
+        static let obsidianExportConfiguration = "obsidian-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
     }
@@ -102,6 +103,7 @@ final class AppModel {
     var soundEffectsEnabled: Bool
     var captureShortcut: CaptureShortcut
     var conversationConfiguration: ConversationConfiguration
+    var obsidianExportConfiguration: ObsidianExportConfiguration
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
     var buildStatus = "Milestone 2 in progress: capture menu actions and selection overlay are wired in."
     var captureErrorMessage: String?
@@ -135,6 +137,7 @@ final class AppModel {
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
+        obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
             self?.applyContextSnapshot(snapshot)
         }
@@ -484,6 +487,7 @@ final class AppModel {
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,
+            obsidianConfiguration: obsidianExportConfiguration,
             screenshots: capturedScreenshots,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
@@ -499,6 +503,27 @@ final class AppModel {
         )
         contextSession?.clear()
         syncOverlayState()
+    }
+
+    func updateObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
+        obsidianExportConfiguration = configuration
+        saveObsidianExportConfiguration(configuration)
+    }
+
+    func obsidianExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<ObsidianExportConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        Binding(
+            get: { self.obsidianExportConfiguration[keyPath: keyPath] },
+            set: { newValue in
+                var configuration = self.obsidianExportConfiguration
+                guard configuration[keyPath: keyPath] != newValue else {
+                    return
+                }
+                configuration[keyPath: keyPath] = newValue
+                self.updateObsidianExportConfiguration(configuration)
+            }
+        )
     }
 
     func updateConversationConfiguration(_ configuration: ConversationConfiguration) {
@@ -588,6 +613,26 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.conversationConfiguration)
+    }
+
+    private static func loadObsidianExportConfiguration() -> ObsidianExportConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.obsidianExportConfiguration) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(ObsidianExportConfiguration.self, from: data)
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
+        guard let data = try? JSONEncoder().encode(configuration) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.obsidianExportConfiguration)
     }
 
     func resetConversationConfiguration() {
