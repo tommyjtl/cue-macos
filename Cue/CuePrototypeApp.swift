@@ -30,6 +30,8 @@ final class AppModel {
 
     private enum UserDefaultsKey {
         static let captureShortcut = "capture-shortcut"
+        static let openChatShortcut = "open-chat-shortcut"
+        static let dismissChatShortcut = "dismiss-chat-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let obsidianExportConfiguration = "obsidian-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
@@ -103,6 +105,8 @@ final class AppModel {
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
     var captureShortcut: CaptureShortcut
+    var openChatShortcut: CaptureShortcut
+    var dismissChatShortcut: DismissChatShortcut
     var conversationConfiguration: ConversationConfiguration
     var obsidianExportConfiguration: ObsidianExportConfiguration
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
@@ -119,6 +123,8 @@ final class AppModel {
     var isConversationInProgress = false
     var isContextOverlayVisible = false
     var isContextOverlayInChatMode = false
+    /// True while the user is in an overlay-driven conversation flow (started from context or resumed after collecting more context).
+    private var hasActiveOverlayConversationFlow = false
     let milestones: [Milestone] = [
         .init(title: "Menu Bar Utility", summary: "Primary entry point for opening the app and the first screenshot capture path."),
         .init(title: "Main Window", summary: "Conversation-focused workspace with a stable split-view layout."),
@@ -137,6 +143,8 @@ final class AppModel {
         conversationStore = try? ConversationStore()
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
+        openChatShortcut = Self.loadOpenChatShortcut()
+        dismissChatShortcut = Self.loadDismissChatShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
         obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
@@ -165,14 +173,10 @@ final class AppModel {
         startPermissionMonitoring()
 
         overlayCoordinator = OverlayCoordinator(
+            dismissChatShortcut: dismissChatShortcut,
             onClear: { [weak self] in
                 Task { @MainActor in
                     self?.clearContextStack()
-                }
-            },
-            onAppDeactivate: { [weak self] in
-                Task { @MainActor in
-                    self?.handleAppDeactivationWhileContextVisible()
                 }
             },
             isCaptureInProgress: { [weak self] in
@@ -219,7 +223,8 @@ final class AppModel {
         self.hotkeyManager = hotkeyManager
 
         hotkeyManager.startMonitoring(
-            shortcut: captureShortcut,
+            captureShortcut: captureShortcut,
+            openChatShortcut: openChatShortcut,
             onTrigger: { [weak self] in
                 Task { @MainActor in
                     self?.handleCaptureShortcutTrigger()
@@ -314,19 +319,54 @@ final class AppModel {
         )
     }
 
-    func updateCaptureShortcut(_ shortcut: CaptureShortcut) {
+    @discardableResult
+    func updateCaptureShortcut(_ shortcut: CaptureShortcut) -> Bool {
         let normalizedShortcut = shortcut.normalized
+        guard !normalizedShortcut.hasSameBinding(as: openChatShortcut) else {
+            buildStatus = "Add-to-context shortcut conflicts with Open Chat (\(openChatShortcut.displayString)). Choose a different binding."
+            return false
+        }
+
         captureShortcut = normalizedShortcut
-        hotkeyManager?.update(shortcut: normalizedShortcut)
+        hotkeyManager?.updateCaptureShortcut(normalizedShortcut)
         saveCaptureShortcut(normalizedShortcut)
         buildStatus = "Add-to-context shortcut updated to \(normalizedShortcut.displayString)."
         setCaptureErrorMessage(nil, source: .selectedText)
+        return true
+    }
+
+    @discardableResult
+    func updateOpenChatShortcut(_ shortcut: CaptureShortcut) -> Bool {
+        let normalizedShortcut = shortcut.normalizedOpenChat()
+        guard !normalizedShortcut.hasSameBinding(as: captureShortcut) else {
+            buildStatus = "Open chat shortcut conflicts with Add To Context (\(captureShortcut.displayString)). Choose a different binding."
+            return false
+        }
+
+        openChatShortcut = normalizedShortcut
+        hotkeyManager?.updateOpenChatShortcut(normalizedShortcut)
+        saveOpenChatShortcut(normalizedShortcut)
+        buildStatus = "Open chat shortcut updated to \(normalizedShortcut.displayString)."
+        return true
+    }
+
+    func setGlobalShortcutHandlingPaused(_ paused: Bool) {
+        hotkeyManager?.setShortcutHandlingPaused(paused)
+    }
+
+    func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        let normalizedShortcut = shortcut.normalized
+        dismissChatShortcut = normalizedShortcut
+        overlayCoordinator?.updateDismissChatShortcut(normalizedShortcut)
+        saveDismissChatShortcut(normalizedShortcut)
+        buildStatus = "Dismiss chat shortcut updated to \(normalizedShortcut.displayString)."
     }
 
     func clearContextStack() {
         cancelConversationSend(resetDraftState: false)
         contextSession?.clear()
         conversationCoordinator?.clearSession()
+        endOverlayConversationFlow()
         overlayCoordinator?.hide()
         refreshOverlayPresentationState()
         buildStatus = "Context stack cleared."
@@ -367,6 +407,7 @@ final class AppModel {
         capturedScreenshots.removeAll()
         selectedTextContexts.removeAll()
         browserPageContexts.removeAll()
+        activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
         if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
             buildStatus = "Loaded \(conversation.title)."
@@ -380,6 +421,7 @@ final class AppModel {
         }
 
         conversationCoordinator?.resumeConversation(mostRecent.id)
+        activateOverlayConversationFlow()
         // Context (screenshots / selected text) is intentionally kept intact.
         if let conversation = savedConversations.first(where: { $0.id == mostRecent.id }) {
             buildStatus = "Loaded \(conversation.title) into the overlay."
@@ -388,37 +430,16 @@ final class AppModel {
         overlayCoordinator?.relayout()
     }
 
-    private func openMostRecentConversationChatIfAvailable() {
-        guard let mostRecent = savedConversations.first else {
-            return
-        }
-
-        conversationCoordinator?.resumeConversation(mostRecent.id)
-        // syncOverlayState is called synchronously via the coordinator callback,
-        // so viewModel.messages is populated before showChat runs.
-        overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
-        refreshOverlayPresentationState()
-        buildStatus = "Resumed \"\(mostRecent.title)\"."
-    }
-
-    func handleAppDeactivationWhileContextVisible() {
-        guard !isCaptureInProgress else {
-            return
-        }
-
-        clearContextStack()
-    }
-
-    func dismissVisibleContextOverlayIfNeeded() {
-        dismissVisibleOverlay()
-    }
-
     func dismissVisibleOverlay() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
-        overlayCoordinator?.handleEscapeRollback()
+        if overlayCoordinator?.isInChatMode == true {
+            overlayCoordinator?.closeChat()
+        } else {
+            overlayCoordinator?.handleEscapeRollback()
+        }
         refreshOverlayPresentationState()
     }
 
@@ -429,6 +450,10 @@ final class AppModel {
     private func refreshOverlayPresentationState() {
         isContextOverlayVisible = overlayCoordinator?.isVisible ?? false
         isContextOverlayInChatMode = isContextOverlayVisible && (overlayCoordinator?.isInChatMode ?? false)
+
+        if !isContextOverlayVisible && !hasContextItems {
+            endOverlayConversationFlow()
+        }
     }
 
     func showMainWindow() {
@@ -461,14 +486,27 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        if hasContextItems {
-            openFreshContextConversationComposer()
+        if canResumeOverlayConversation {
+            openContextConversationComposer()
         } else {
-            openMostRecentConversationChatIfAvailable()
+            openFreshContextConversationComposer()
         }
     }
 
+    private var canResumeOverlayConversation: Bool {
+        hasActiveOverlayConversationFlow && !conversationMessages.isEmpty
+    }
+
+    private func activateOverlayConversationFlow() {
+        hasActiveOverlayConversationFlow = true
+    }
+
+    private func endOverlayConversationFlow() {
+        hasActiveOverlayConversationFlow = false
+    }
+
     private func openFreshContextConversationComposer() {
+        endOverlayConversationFlow()
         conversationCoordinator?.clearSession()
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
@@ -478,13 +516,16 @@ final class AppModel {
     }
 
     private func openContextConversationComposer() {
+        activateOverlayConversationFlow()
+        setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
         refreshOverlayPresentationState()
-        buildStatus = "Context composer opened."
+        buildStatus = "Context conversation resumed."
     }
 
     func handleConversationSend(_ draft: String) {
+        activateOverlayConversationFlow()
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,
@@ -585,6 +626,14 @@ final class AppModel {
         updateCaptureShortcut(.defaultValue)
     }
 
+    func resetOpenChatShortcutToDefault() {
+        updateOpenChatShortcut(.defaultOpenChatValue)
+    }
+
+    func resetDismissChatShortcutToDefault() {
+        updateDismissChatShortcut(.defaultValue)
+    }
+
     private static func loadCaptureShortcut() -> CaptureShortcut {
         guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.captureShortcut) else {
             return .defaultValue
@@ -603,6 +652,46 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.captureShortcut)
+    }
+
+    private static func loadOpenChatShortcut() -> CaptureShortcut {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.openChatShortcut) else {
+            return .defaultOpenChatValue
+        }
+
+        do {
+            return try JSONDecoder().decode(CaptureShortcut.self, from: data).normalizedOpenChat()
+        } catch {
+            return .defaultOpenChatValue
+        }
+    }
+
+    private func saveOpenChatShortcut(_ shortcut: CaptureShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.openChatShortcut)
+    }
+
+    private static func loadDismissChatShortcut() -> DismissChatShortcut {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.dismissChatShortcut) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(DismissChatShortcut.self, from: data).normalized
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.dismissChatShortcut)
     }
 
     private static func loadConversationConfiguration() -> ConversationConfiguration {
@@ -962,7 +1051,7 @@ private struct MenuBarContentView: View {
             Button("Dismiss Chat UI") {
                 appState.dismissVisibleOverlay()
             }
-        } else if appState.isContextOverlayVisible {
+        } else if appState.isContextOverlayVisible && appState.hasContextItems {
             Button("Dismiss Context") {
                 appState.dismissVisibleOverlay()
             }
@@ -1249,149 +1338,6 @@ struct ConversationSettingsSection: View {
         }
         configuration.ollamaThinkingMode = normalizedMode
         appState.updateConversationConfiguration(configuration)
-    }
-}
-
-struct ShortcutSettingsSection: View {
-    @Environment(AppModel.self) private var appState
-    @State private var draftShortcut = CaptureShortcut.defaultValue
-    @State private var isEditingAddToContext = false
-
-    var body: some View {
-        SettingsCard {
-            SettingsRow(
-                title: ShortcutFeatureCopy.openChatName,
-                subtitle: ShortcutFeatureCopy.openChatBinding
-            )
-
-            SettingsRowDivider()
-
-            SettingsRow(
-                title: ShortcutFeatureCopy.addToContextName,
-                subtitle: appState.captureShortcut.displayString
-            ) {
-                SettingsChangeButton(isEditingAddToContext ? "Done" : "Change") {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isEditingAddToContext.toggle()
-                    }
-                }
-            }
-
-            if isEditingAddToContext {
-                SettingsRowDivider()
-
-                SettingsInsetContent {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SettingsFootnote(ShortcutFeatureCopy.openChatSummary)
-                        SettingsFootnote(ShortcutFeatureCopy.addToContextSummary)
-
-                        SettingsFieldGroup(label: "Shortcut Type") {
-                            Picker("Shortcut Type", selection: $draftShortcut.kind) {
-                                ForEach(CaptureShortcut.Kind.allCases) { kind in
-                                    Text(kind.title).tag(kind)
-                                }
-                            }
-                            .labelsHidden()
-                        }
-
-                        if draftShortcut.kind == .doubleModifier {
-                            SettingsFieldGroup(label: "Modifier") {
-                                Picker("Modifier", selection: doubleModifierRawValueBinding) {
-                                    ForEach(CaptureShortcut.doubleModifierOptions, id: \.rawValue) { modifier in
-                                        Text(modifierTitle(for: modifier)).tag(modifier.rawValue)
-                                    }
-                                }
-                                .labelsHidden()
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle("Shift", isOn: modifierBinding(.shift))
-                                Toggle("Option", isOn: modifierBinding(.option))
-                                Toggle("Control", isOn: modifierBinding(.control))
-                                Toggle("Command", isOn: modifierBinding(.command))
-                            }
-                        }
-
-                        if draftShortcut.kind == .keyCombo {
-                            SettingsFieldGroup(label: "Key") {
-                                Picker("Key", selection: keyCodeBinding) {
-                                    ForEach(CaptureShortcut.availableKeys) { option in
-                                        Text(option.title).tag(option.keyCode)
-                                    }
-                                }
-                                .labelsHidden()
-                            }
-                        }
-
-                        SettingsChangeButton("Reset to Default") {
-                            draftShortcut = .defaultValue
-                        }
-
-                        SettingsFootnote("Default is Double Option. If double-modifier detection feels unreliable on your machine, switch Add To Context to a held modifier combo or a key combination.")
-                    }
-                }
-            }
-        }
-        .onAppear {
-            draftShortcut = appState.captureShortcut
-        }
-        .onChange(of: draftShortcut, initial: false) { _, newValue in
-            let normalizedShortcut = newValue.normalized
-            if normalizedShortcut != newValue {
-                draftShortcut = normalizedShortcut
-                return
-            }
-
-            appState.updateCaptureShortcut(normalizedShortcut)
-        }
-    }
-
-    private func modifierBinding(_ modifier: NSEvent.ModifierFlags) -> Binding<Bool> {
-        Binding(
-            get: {
-                draftShortcut.contains(modifier)
-            },
-            set: { isEnabled in
-                draftShortcut.setModifier(modifier, enabled: isEnabled)
-            }
-        )
-    }
-
-    private var doubleModifierRawValueBinding: Binding<UInt> {
-        Binding(
-            get: {
-                CaptureShortcut.doubleModifierOptions.first(where: { draftShortcut.modifierFlags.contains($0) })?.rawValue ?? NSEvent.ModifierFlags.option.rawValue
-            },
-            set: { rawValue in
-                draftShortcut.modifierFlagsRawValue = rawValue
-            }
-        )
-    }
-
-    private func modifierTitle(for modifier: NSEvent.ModifierFlags) -> String {
-        switch modifier {
-        case .option:
-            return "Option"
-        case .control:
-            return "Control"
-        case .command:
-            return "Command"
-        case .shift:
-            return "Shift"
-        default:
-            return "Modifier"
-        }
-    }
-
-    private var keyCodeBinding: Binding<UInt16> {
-        Binding(
-            get: {
-                draftShortcut.keyCode ?? CaptureShortcut.defaultKeyOption.keyCode
-            },
-            set: { keyCode in
-                draftShortcut.keyCode = keyCode
-            }
-        )
     }
 }
 

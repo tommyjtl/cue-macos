@@ -222,6 +222,39 @@ struct AttachedBrowserPageReference: Codable, Equatable, Hashable {
     }
 }
 
+struct AttachedSelectedTextReference: Codable, Equatable, Hashable {
+    let text: String
+    let appName: String?
+
+    init(text: String, appName: String?) {
+        self.text = text
+        self.appName = appName
+    }
+
+    init(context: AttachedTextContext) {
+        self.init(text: context.text, appName: context.appName)
+    }
+
+    func serialized() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(codingPath: [], debugDescription: "Could not encode selected text reference.")
+            )
+        }
+        return value
+    }
+
+    static func deserialized(from value: String) -> AttachedSelectedTextReference? {
+        guard let data = value.data(using: .utf8) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(AttachedSelectedTextReference.self, from: data)
+    }
+}
+
 struct ConversationMessageDTO: Identifiable, Equatable {
     enum Role: String, Codable {
         case system
@@ -235,6 +268,7 @@ struct ConversationMessageDTO: Identifiable, Equatable {
     let processBlocks: [ConversationProcessBlockDTO]
     let attachedContextLabels: [String]
     let attachedBrowserPages: [AttachedBrowserPageReference]
+    let attachedSelectedTexts: [AttachedSelectedTextReference]
     let imageAttachments: [ConversationImageAttachmentReference]
 
     nonisolated init(
@@ -246,6 +280,7 @@ struct ConversationMessageDTO: Identifiable, Equatable {
         processBlocks: [ConversationProcessBlockDTO] = [],
         attachedContextLabels: [String] = [],
         attachedBrowserPages: [AttachedBrowserPageReference] = [],
+        attachedSelectedTexts: [AttachedSelectedTextReference] = [],
         imageAttachments: [ConversationImageAttachmentReference] = []
     ) {
         self.id = id
@@ -253,6 +288,7 @@ struct ConversationMessageDTO: Identifiable, Equatable {
         self.text = text
         self.attachedContextLabels = attachedContextLabels
         self.attachedBrowserPages = attachedBrowserPages
+        self.attachedSelectedTexts = attachedSelectedTexts
         self.imageAttachments = imageAttachments
         if processBlocks.isEmpty, let thinkingText = thinkingText?.nilIfBlank {
             self.processBlocks = [ConversationProcessBlockDTO(kind: .thinking, text: thinkingText, isComplete: isThinkingComplete)]

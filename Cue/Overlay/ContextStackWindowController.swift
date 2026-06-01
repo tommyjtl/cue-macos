@@ -15,7 +15,6 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     private let onClear: () -> Void
-    private let onAppDeactivate: () -> Void
     private let isCaptureInProgress: () -> Bool
     private let onCancelSend: () -> Void
     private let onSendDraft: (String) -> Void
@@ -26,20 +25,36 @@ final class ContextStackWindowController: NSWindowController {
     private let panel: ContextStackPanel
     private let hostingView: NSHostingView<ContextStackView>
     private let viewModel: ContextPanelViewModel
+    private var dismissChatShortcut: DismissChatShortcut
+    /// Read from the global keyDown monitor callback (nonisolated context).
+    private nonisolated(unsafe) var globalMonitorDismissShortcut: DismissChatShortcut = .defaultValue
+    /// Read from the global keyDown monitor callback (nonisolated context).
+    private nonisolated(unsafe) var globalMonitorPanelIsVisible = false
+    private var dismissShortcutPressTracker = RepeatedKeyPressTracker()
     private var displayLink: CADisplayLink?
     private var localEscapeMonitor: Any?
     private var globalEscapeMonitor: Any?
-    private var localMouseDownMonitor: Any?
-    private var globalMouseDownMonitor: Any?
     private var cursorEnteredPanelAt: CFTimeInterval?
     private var lastEscapeRollbackAt: CFTimeInterval?
     private var placementAnchor: NSPoint?
     private var chatPanelManuallyPositioned = false
     private var panelDragObserver: NSObjectProtocol?
 
-    init(onClear: @escaping () -> Void, onAppDeactivate: @escaping () -> Void, isCaptureInProgress: @escaping () -> Bool, onCancelSend: @escaping () -> Void, onSendDraft: @escaping (String) -> Void, onLoadMostRecent: @escaping () -> Void, onSetWebSearchEnabled: @escaping (Bool) -> Void, onRemoveContextItem: @escaping (ContextPreviewItem) -> Void, onPresentationChange: @escaping () -> Void) {
+    init(
+        dismissChatShortcut: DismissChatShortcut? = nil,
+        onClear: @escaping () -> Void,
+        isCaptureInProgress: @escaping () -> Bool,
+        onCancelSend: @escaping () -> Void,
+        onSendDraft: @escaping (String) -> Void,
+        onLoadMostRecent: @escaping () -> Void,
+        onSetWebSearchEnabled: @escaping (Bool) -> Void,
+        onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
+        onPresentationChange: @escaping () -> Void
+    ) {
+        let normalizedDismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
+        self.dismissChatShortcut = normalizedDismissChatShortcut
+        self.globalMonitorDismissShortcut = normalizedDismissChatShortcut
         self.onClear = onClear
-        self.onAppDeactivate = onAppDeactivate
         self.isCaptureInProgress = isCaptureInProgress
         self.onCancelSend = onCancelSend
         self.onSendDraft = onSendDraft
@@ -71,17 +86,16 @@ final class ContextStackWindowController: NSWindowController {
 
         super.init(window: panel)
         panel.onEscapeKey = { [weak self] in
-            self?.handleEscapeRollback() ?? false
+            guard let self, self.viewModel.mode == .stack else { return false }
+            return self.handleEscapeRollback()
         }
         setPanelInteractionMode(for: .stack)
-        installApplicationLifecycleObserver()
         installPanelDragObserver()
         refreshRootView()
         installEscapeMonitorsIfNeeded()
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self, name: NSApplication.didResignActiveNotification, object: nil)
         if let panelDragObserver {
             NotificationCenter.default.removeObserver(panelDragObserver)
         }
@@ -119,6 +133,7 @@ final class ContextStackWindowController: NSWindowController {
         cursorEnteredPanelAt = nil
         applyPlacement(anchor: point)
         presentStackPanelWithoutActivatingApp(revertingTo: previousApp)
+        globalMonitorPanelIsVisible = true
         startFollowingCursor()
         notifyPresentationChange()
     }
@@ -128,14 +143,11 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     func showChat(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
-        guard !screenshots.isEmpty || !selectedTextContexts.isEmpty || !browserPageContexts.isEmpty || !viewModel.messages.isEmpty else {
-            return
-        }
-
         viewModel.screenshots = screenshots
         viewModel.selectedTextContexts = selectedTextContexts
         viewModel.browserPageContexts = browserPageContexts
         viewModel.mode = .chat
+        resetDismissShortcutPressTracking()
         setPanelInteractionMode(for: .chat)
         cursorEnteredPanelAt = nil
         stopFollowingCursor()
@@ -143,6 +155,7 @@ final class ContextStackWindowController: NSWindowController {
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        globalMonitorPanelIsVisible = true
         requestComposerFocus()
         SoundEffectPlayer.play(.chatOpened)
         notifyPresentationChange()
@@ -205,6 +218,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.browserPageContexts = []
         setPanelInteractionMode(for: .stack)
         panel.orderOut(nil)
+        globalMonitorPanelIsVisible = false
         notifyPresentationChange()
     }
 
@@ -230,23 +244,9 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    private func installApplicationLifecycleObserver() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppDidResignActiveNotification(_:)),
-            name: NSApplication.didResignActiveNotification,
-            object: nil
-        )
-    }
-
     @objc
     private func handleDisplayLinkTick(_ sender: CADisplayLink) {
         updatePositionIfNeeded()
-    }
-
-    @objc
-    private func handleAppDidResignActiveNotification(_ notification: Notification) {
-        // Keep the overlay visible across app switches; chat should close only by explicit user action.
     }
 
     private func updatePositionIfNeeded() {
@@ -321,22 +321,20 @@ final class ContextStackWindowController: NSWindowController {
         installGlobalEventMonitorsIfNeeded()
     }
 
+    func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        let normalizedShortcut = shortcut.normalized
+        dismissChatShortcut = normalizedShortcut
+        globalMonitorDismissShortcut = normalizedShortcut
+        resetDismissShortcutPressTracking()
+    }
+
     private func installLocalEventMonitorsIfNeeded() {
         if localEscapeMonitor == nil {
             localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
                 guard self.panel.isVisible else { return event }
 
-                guard self.isEscapeKeyEvent(event) else { return event }
-
-                return self.handleEscapeRollback() ? nil : event
-            }
-        }
-
-        if localMouseDownMonitor == nil {
-            localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-                self?.handleMouseDown()
-                return event
+                return self.handleOverlayKeyDown(event) ? nil : event
             }
         }
     }
@@ -344,21 +342,20 @@ final class ContextStackWindowController: NSWindowController {
     private func installGlobalEventMonitorsIfNeeded() {
         if globalEscapeMonitor == nil {
             globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard Self.isEscapeKeyEvent(event) else { return }
+                guard let self else { return }
+                guard self.globalMonitorPanelIsVisible else { return }
+                guard Self.couldBeOverlayDismissKeyDown(event, dismissShortcut: self.globalMonitorDismissShortcut) else {
+                    return
+                }
+
                 Task { @MainActor in
-                    guard let self, self.panel.isVisible else { return }
-                    self.handleEscapeRollback()
+                    guard self.panel.isVisible else { return }
+                    _ = self.handleOverlayKeyDown(event)
                 }
             }
 
             if globalEscapeMonitor == nil {
-                print("[ContextStackWindowController] Global Escape monitor unavailable — grant Accessibility to dismiss the overlay from other apps")
-            }
-        }
-
-        if globalMouseDownMonitor == nil {
-            globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
-                self?.handleMouseDown()
+                print("[ContextStackWindowController] Global shortcut monitor unavailable — grant Accessibility to dismiss chat or the context stack from other apps")
             }
         }
     }
@@ -367,11 +364,6 @@ final class ContextStackWindowController: NSWindowController {
         if let globalEscapeMonitor {
             NSEvent.removeMonitor(globalEscapeMonitor)
             self.globalEscapeMonitor = nil
-        }
-
-        if let globalMouseDownMonitor {
-            NSEvent.removeMonitor(globalMouseDownMonitor)
-            self.globalMouseDownMonitor = nil
         }
     }
 
@@ -382,11 +374,6 @@ final class ContextStackWindowController: NSWindowController {
         }
 
         removeGlobalEventMonitors()
-
-        if let localMouseDownMonitor {
-            NSEvent.removeMonitor(localMouseDownMonitor)
-            self.localMouseDownMonitor = nil
-        }
     }
 
     private func installPanelDragObserver() {
@@ -395,7 +382,9 @@ final class ContextStackWindowController: NSWindowController {
             object: panel,
             queue: .main
         ) { [weak self] _ in
-            self?.chatPanelManuallyPositioned = true
+            Task { @MainActor in
+                self?.chatPanelManuallyPositioned = true
+            }
         }
     }
 
@@ -466,7 +455,7 @@ final class ContextStackWindowController: NSWindowController {
             model: viewModel,
             onClear: onClear,
             onCloseChat: { [weak self] in
-                self?.exitChatMode()
+                self?.closeChat()
             },
             onSend: { [weak self] in
                 self?.sendCurrentDraft()
@@ -483,17 +472,16 @@ final class ContextStackWindowController: NSWindowController {
             onRemoveContextItem: { [weak self] item in
                 self?.onRemoveContextItem(item)
             },
-            onEscape: { [weak self] in
-                _ = self?.handleEscapeRollback()
-            }
+            onEscape: {}
         )
     }
 
-    /// Rolls back one overlay level: chat → context stack → dismissed.
+    /// Dismisses the context stack when Escape is pressed. Chat closes via the configured dismiss shortcut.
     @discardableResult
     func handleEscapeRollback() -> Bool {
         guard panel.isVisible else { return false }
         guard !isCaptureInProgress() else { return false }
+        guard viewModel.mode == .stack else { return false }
 
         let now = CFAbsoluteTimeGetCurrent()
         if let lastEscapeRollbackAt, now - lastEscapeRollbackAt < 0.15 {
@@ -501,21 +489,56 @@ final class ContextStackWindowController: NSWindowController {
         }
         lastEscapeRollbackAt = now
 
-        switch viewModel.mode {
-        case .chat:
-            exitChatMode()
-        case .stack:
-            onClear()
-        }
-
+        onClear()
         notifyPresentationChange()
         return true
+    }
+
+    @discardableResult
+    func handleOverlayKeyDown(_ event: NSEvent) -> Bool {
+        guard panel.isVisible else { return false }
+        guard !isCaptureInProgress() else { return false }
+
+        switch viewModel.mode {
+        case .stack:
+            guard isEscapeKeyEvent(event) else { return false }
+            return handleEscapeRollback()
+        case .chat:
+            guard dismissChatShortcut.matches(event) else { return false }
+            handleDismissChatShortcutPress()
+            return true
+        }
+    }
+
+    private func handleDismissChatShortcutPress() {
+        guard dismissShortcutPressTracker.registerPress(shortcut: dismissChatShortcut) else {
+            return
+        }
+
+        closeChat()
+        notifyPresentationChange()
+    }
+
+    private func resetDismissShortcutPressTracking() {
+        dismissShortcutPressTracker.reset()
+    }
+
+    func closeChat() {
+        resetDismissShortcutPressTracking()
+        exitChatMode()
     }
 
     nonisolated static func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
         let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         return event.keyCode == 53
             && event.modifierFlags.intersection(modifierFlagsMask).isEmpty
+    }
+
+    nonisolated static func couldBeOverlayDismissKeyDown(
+        _ event: NSEvent,
+        dismissShortcut: DismissChatShortcut
+    ) -> Bool {
+        isEscapeKeyEvent(event) || dismissShortcut.matches(event)
     }
 
     private func isEscapeKeyEvent(_ event: NSEvent) -> Bool {
@@ -529,15 +552,19 @@ final class ContextStackWindowController: NSWindowController {
     private func setPanelInteractionMode(for mode: ContextPanelViewModel.Mode) {
         switch mode {
         case .chat:
-            panel.styleMask.remove(.nonactivatingPanel)
+            if !panel.styleMask.contains(.nonactivatingPanel) {
+                panel.styleMask.insert(.nonactivatingPanel)
+            }
             panel.becomesKeyOnlyIfNeeded = false
             panel.requiresInteractiveKeyboardInput = true
+            panel.acceptsMouseMovedEvents = true
         case .stack:
             if !panel.styleMask.contains(.nonactivatingPanel) {
                 panel.styleMask.insert(.nonactivatingPanel)
             }
             panel.becomesKeyOnlyIfNeeded = true
             panel.requiresInteractiveKeyboardInput = false
+            panel.acceptsMouseMovedEvents = false
         }
     }
 
@@ -552,12 +579,21 @@ final class ContextStackWindowController: NSWindowController {
             onCancelSend()
         }
 
-        viewModel.mode = .stack
         viewModel.draftMessage = ""
-        setPanelInteractionMode(for: .stack)
-        applyPlacement()
-        startFollowingCursor()
-        notifyPresentationChange()
+
+        let hasContext = !viewModel.screenshots.isEmpty
+            || !viewModel.selectedTextContexts.isEmpty
+            || !viewModel.browserPageContexts.isEmpty
+
+        if hasContext {
+            viewModel.mode = .stack
+            setPanelInteractionMode(for: .stack)
+            applyPlacement()
+            startFollowingCursor()
+            notifyPresentationChange()
+        } else {
+            hide()
+        }
     }
 
     private func sendCurrentDraft() {
@@ -568,16 +604,6 @@ final class ContextStackWindowController: NSWindowController {
 
         viewModel.draftMessage = ""
         onSendDraft(draft)
-    }
-
-    private func handleMouseDown() {
-        guard panel.isVisible, viewModel.mode == .chat else {
-            return
-        }
-
-        if !panel.frame.contains(NSEvent.mouseLocation) {
-            exitChatMode()
-        }
     }
 
     private func resignComposerInputFocus() {

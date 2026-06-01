@@ -41,6 +41,7 @@ struct ContextStackView: View {
         static let controlFont = Font.system(size: 13)
         static let controlFontSize: CGFloat = 13
         static let cornerRadius: CGFloat = 14
+        static let headerHeight: CGFloat = 44
     }
 
     @Bindable var model: ContextPanelViewModel
@@ -131,34 +132,7 @@ struct ContextStackView: View {
 
     private var chatContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Ask Cue")
-                        .font(.headline)
-
-                    Text(chatSubtitle)
-                        .font(ComposerLayout.controlFont)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .overlay(WindowDragArea())
-
-                Button {
-                    onCloseChat()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close composer")
-            }
-
-            Color.clear
-                .frame(height: 18)
-                .contentShape(Rectangle())
-                .overlay(WindowDragArea())
+            chatHeader
 
             transcriptContent
 
@@ -237,6 +211,36 @@ struct ContextStackView: View {
                 .disabled(!model.isSending && model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+    }
+
+    private var chatHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ZStack(alignment: .leading) {
+                WindowDragArea()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ask Cue")
+                        .font(.headline)
+
+                    Text(chatSubtitle)
+                        .font(ComposerLayout.controlFont)
+                        .foregroundStyle(.secondary)
+                }
+                .allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+
+            Button {
+                onCloseChat()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close composer")
+        }
+        .frame(height: ComposerLayout.headerHeight)
     }
 
     private var transcriptContent: some View {
@@ -1051,9 +1055,28 @@ private final class DragHandleView: NSView {
     override var isFlipped: Bool { true }
 
     private var isDragging = false
+    private var dragOriginScreenLocation: NSPoint?
+    private var dragOriginWindowFrame: NSRect?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
         window?.invalidateCursorRects(for: self)
     }
 
@@ -1066,14 +1089,63 @@ private final class DragHandleView: NSView {
         addCursorRect(bounds, cursor: isDragging ? .closedHand : .openHand)
     }
 
-    override func mouseDown(with event: NSEvent) {
-        isDragging = true
-        window?.invalidateCursorRects(for: self)
-        NSCursor.closedHand.set()
+    override func cursorUpdate(with event: NSEvent) {
+        guard !isDragging else {
+            NSCursor.closedHand.set()
+            return
+        }
 
-        window?.performDrag(with: event)
+        NSCursor.openHand.set()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard !isDragging else { return }
+        NSCursor.openHand.set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard !isDragging else { return }
+        NSCursor.arrow.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard !isDragging else { return }
+        NSCursor.openHand.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+
+        isDragging = true
+        dragOriginScreenLocation = NSEvent.mouseLocation
+        dragOriginWindowFrame = window.frame
+        window.invalidateCursorRects(for: self)
+        NSCursor.closedHand.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging,
+              let window,
+              let originScreen = dragOriginScreenLocation,
+              let originFrame = dragOriginWindowFrame else {
+            return
+        }
+
+        let currentScreen = NSEvent.mouseLocation
+        let deltaX = currentScreen.x - originScreen.x
+        let deltaY = currentScreen.y - originScreen.y
+        var newFrame = originFrame
+        newFrame.origin.x += deltaX
+        newFrame.origin.y += deltaY
+        window.setFrame(newFrame, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
 
         isDragging = false
+        dragOriginScreenLocation = nil
+        dragOriginWindowFrame = nil
         window?.invalidateCursorRects(for: self)
         NSCursor.openHand.set()
 

@@ -70,7 +70,9 @@ struct CaptureShortcut: Codable, Equatable {
         .init(keyCode: 6, title: "Z")
     ]
     static let defaultValue = CaptureShortcut(kind: .doubleModifier, modifierFlagsRawValue: NSEvent.ModifierFlags.option.rawValue, keyCode: nil)
+    static let defaultOpenChatValue = CaptureShortcut(kind: .doubleModifier, modifierFlagsRawValue: NSEvent.ModifierFlags.shift.rawValue, keyCode: nil)
     static let defaultKeyOption = availableKeys.first { $0.title == "2" } ?? availableKeys[0]
+    static let doubleModifierOptionsWithShift: [NSEvent.ModifierFlags] = [.shift, .option, .control, .command]
 
     var kind: Kind
     var modifierFlagsRawValue: UInt
@@ -123,6 +125,31 @@ struct CaptureShortcut: Codable, Equatable {
         return normalized
     }
 
+    func normalizedOpenChat() -> CaptureShortcut {
+        var normalized = self
+        let filteredFlags = modifierFlags.intersection(Self.modifierFlagsMask)
+        normalized.modifierFlagsRawValue = filteredFlags.rawValue
+
+        switch normalized.kind {
+        case .modifierOnly:
+            normalized.keyCode = nil
+            if filteredFlags.isEmpty {
+                normalized.modifierFlagsRawValue = NSEvent.ModifierFlags.shift.rawValue
+            }
+        case .doubleModifier:
+            let supportedFlags = filteredFlags.intersection(NSEvent.ModifierFlags(Self.doubleModifierOptionsWithShift))
+            let normalizedFlag = Self.doubleModifierOptionsWithShift.first(where: { supportedFlags.contains($0) }) ?? .shift
+            normalized.modifierFlagsRawValue = normalizedFlag.rawValue
+            normalized.keyCode = nil
+        case .keyCombo:
+            if normalized.keyCode == nil {
+                normalized.keyCode = Self.defaultKeyOption.keyCode
+            }
+        }
+
+        return normalized
+    }
+
     mutating func setModifier(_ modifier: NSEvent.ModifierFlags, enabled: Bool) {
         var updated = modifierFlags
         if enabled {
@@ -137,6 +164,19 @@ struct CaptureShortcut: Codable, Equatable {
         modifierFlags.contains(modifier)
     }
 
+    /// Whether two shortcuts would register the same physical binding.
+    func hasSameBinding(as other: CaptureShortcut) -> Bool {
+        guard kind == other.kind else { return false }
+        guard modifierFlags == other.modifierFlags else { return false }
+
+        switch kind {
+        case .modifierOnly, .doubleModifier:
+            return true
+        case .keyCombo:
+            return keyCode == other.keyCode
+        }
+    }
+
     private func orderedModifierNames(for flags: NSEvent.ModifierFlags) -> [String] {
         var names: [String] = []
         if flags.contains(.control) { names.append("Control") }
@@ -147,13 +187,132 @@ struct CaptureShortcut: Codable, Equatable {
     }
 }
 
+struct DismissChatShortcut: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case repeatedKey
+
+        var id: String { rawValue }
+
+        var title: String {
+            "Repeated Key"
+        }
+    }
+
+    static let escapeKeyCode: UInt16 = 53
+    static let defaultMaxIntervalBetweenPresses: TimeInterval = 0.35
+    static let duplicateEventTolerance: TimeInterval = 0.05
+    static let defaultValue = DismissChatShortcut(
+        kind: .repeatedKey,
+        keyCode: escapeKeyCode,
+        pressCount: 2,
+        maxIntervalBetweenPresses: defaultMaxIntervalBetweenPresses,
+        modifierFlagsRawValue: 0
+    )
+    static let minimumPressCount = 2
+
+    static let availableKeys: [CaptureShortcut.KeyOption] = {
+        [CaptureShortcut.KeyOption(keyCode: escapeKeyCode, title: "Escape")] + CaptureShortcut.availableKeys
+    }()
+
+    var kind: Kind
+    var keyCode: UInt16?
+    var pressCount: Int
+    var maxIntervalBetweenPresses: TimeInterval
+    var modifierFlagsRawValue: UInt
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifierFlagsRawValue).intersection(CaptureShortcut.modifierFlagsMask)
+    }
+
+    var normalized: DismissChatShortcut {
+        var normalized = self
+        normalized.pressCount = min(max(pressCount, 2), 5)
+        normalized.maxIntervalBetweenPresses = min(max(maxIntervalBetweenPresses, 0.15), 1.0)
+        normalized.modifierFlagsRawValue = modifierFlags.rawValue
+        if normalized.keyCode == nil {
+            normalized.keyCode = Self.escapeKeyCode
+        }
+        return normalized
+    }
+
+    var displayString: String {
+        let keyTitle = Self.keyTitle(for: keyCode ?? Self.escapeKeyCode)
+        switch pressCount {
+        case 2:
+            return "Double \(keyTitle)"
+        case 3:
+            return "Triple \(keyTitle)"
+        default:
+            return "\(pressCount)× \(keyTitle)"
+        }
+    }
+
+    func matches(_ event: NSEvent) -> Bool {
+        guard kind == .repeatedKey else { return false }
+        guard let keyCode, event.keyCode == keyCode else { return false }
+
+        let modifierMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        return event.modifierFlags.intersection(modifierMask) == modifierFlags
+    }
+
+    static func keyTitle(for keyCode: UInt16) -> String {
+        if keyCode == escapeKeyCode {
+            return "Escape"
+        }
+
+        return CaptureShortcut.availableKeys.first(where: { $0.keyCode == keyCode })?.title ?? "Key \(keyCode)"
+    }
+}
+
+struct RepeatedKeyPressTracker {
+    private(set) var pressCount = 0
+    private var lastPressAt: TimeInterval?
+    private var lastHandledEventTimestamp: TimeInterval?
+
+    mutating func reset() {
+        pressCount = 0
+        lastPressAt = nil
+        lastHandledEventTimestamp = nil
+    }
+
+    mutating func registerPress(
+        shortcut: DismissChatShortcut,
+        now: TimeInterval = CFAbsoluteTimeGetCurrent()
+    ) -> Bool {
+
+        if let lastHandledEventTimestamp,
+           now - lastHandledEventTimestamp < DismissChatShortcut.duplicateEventTolerance {
+            return false
+        }
+        lastHandledEventTimestamp = now
+
+        if let lastPressAt,
+           now - lastPressAt > shortcut.maxIntervalBetweenPresses {
+            pressCount = 0
+        }
+
+        pressCount += 1
+        lastPressAt = now
+
+        guard pressCount >= shortcut.pressCount else {
+            return false
+        }
+
+        reset()
+        return true
+    }
+}
+
 enum ShortcutFeatureCopy {
     static let openChatName = "Open Chat"
     static let openChatBinding = "Double Shift"
-    static let openChatSummary = "Opens the chat composer. With context already attached, starts a new chat; otherwise resumes your most recent conversation."
+    static let openChatSummary = "Opens chat near the cursor. Resumes the active overlay conversation when one is in progress, otherwise starts fresh."
 
     static let addToContextName = "Add To Context"
     static let addToContextSummary = "Double Option by default. Starts a screenshot region capture and attaches it to the context window."
+
+    static let dismissChatName = "Dismiss Chat"
+    static let dismissChatSummary = "Closes the chat composer while keeping the overlay available. Default is Double Escape."
 }
 
 @MainActor
@@ -170,20 +329,27 @@ final class HotkeyManager {
     private var localKeyDownMonitor: Any?
     private var onTrigger: (() -> Void)?
     private var onConversationTrigger: (() -> Void)?
-    private var shortcut = CaptureShortcut.defaultValue
+    private var captureShortcut = CaptureShortcut.defaultValue
+    private var openChatShortcut = CaptureShortcut.defaultOpenChatValue
     private var lastModifierFlags: NSEvent.ModifierFlags = []
     private var isMonitoring = false
-    private var bareShiftKeyDownAt: CFTimeInterval?
-    private var lastBareShiftTapAt: CFTimeInterval?
-    private var bareCaptureModifierKeyDownAt: CFTimeInterval?
-    private var lastBareCaptureModifierTapAt: CFTimeInterval?
+    private var captureDoubleTapState = DoubleModifierTapState()
+    private var openChatDoubleTapState = DoubleModifierTapState()
+    private var isShortcutHandlingPaused = false
+
+    private struct DoubleModifierTapState {
+        var bareModifierKeyDownAt: CFTimeInterval?
+        var lastBareModifierTapAt: CFTimeInterval?
+    }
 
     func startMonitoring(
-        shortcut: CaptureShortcut,
+        captureShortcut: CaptureShortcut,
+        openChatShortcut: CaptureShortcut,
         onTrigger: @escaping () -> Void,
         onConversationTrigger: @escaping () -> Void
     ) {
-        self.shortcut = shortcut.normalized
+        self.captureShortcut = captureShortcut.normalized
+        self.openChatShortcut = openChatShortcut.normalizedOpenChat()
         self.onTrigger = onTrigger
         self.onConversationTrigger = onConversationTrigger
 
@@ -192,8 +358,16 @@ final class HotkeyManager {
         installMonitors()
     }
 
-    func update(shortcut: CaptureShortcut) {
-        self.shortcut = shortcut.normalized
+    func updateCaptureShortcut(_ shortcut: CaptureShortcut) {
+        captureShortcut = shortcut.normalized
+    }
+
+    func updateOpenChatShortcut(_ shortcut: CaptureShortcut) {
+        openChatShortcut = shortcut.normalizedOpenChat()
+    }
+
+    func setShortcutHandlingPaused(_ paused: Bool) {
+        isShortcutHandlingPaused = paused
     }
 
     /// Global monitors require Accessibility. Call when permission is granted after launch.
@@ -270,13 +444,73 @@ final class HotkeyManager {
         removeGlobalMonitors()
     }
 
+    private var shortcutsShareBinding: Bool {
+        openChatShortcut.hasSameBinding(as: captureShortcut)
+    }
+
     private func handleFlagsChanged(_ event: NSEvent) {
-        handleDoubleShift(event)
-        handleDoubleModifierShortcut(event)
+        guard !isShortcutHandlingPaused else { return }
 
         let currentFlags = filteredModifierFlags(from: event.modifierFlags)
         defer { lastModifierFlags = currentFlags }
 
+        if shortcutsShareBinding {
+            handleSharedBindingFlagsChanged(event, currentFlags: currentFlags)
+            return
+        }
+
+        handleDoubleModifierShortcut(
+            event,
+            shortcut: openChatShortcut,
+            state: &openChatDoubleTapState,
+            onTrigger: onConversationTrigger
+        )
+        handleDoubleModifierShortcut(
+            event,
+            shortcut: captureShortcut,
+            state: &captureDoubleTapState,
+            onTrigger: onTrigger
+        )
+
+        handleModifierOnlyShortcut(
+            currentFlags: currentFlags,
+            shortcut: openChatShortcut,
+            onTrigger: onConversationTrigger
+        )
+        handleModifierOnlyShortcut(
+            currentFlags: currentFlags,
+            shortcut: captureShortcut,
+            onTrigger: onTrigger
+        )
+    }
+
+    /// When Open Chat and Add To Context share a binding, route the gesture once (Open Chat wins).
+    private func handleSharedBindingFlagsChanged(_ event: NSEvent, currentFlags: NSEvent.ModifierFlags) {
+        switch openChatShortcut.kind {
+        case .doubleModifier:
+            handleDoubleModifierShortcut(
+                event,
+                shortcut: openChatShortcut,
+                state: &openChatDoubleTapState,
+                onTrigger: onConversationTrigger
+            )
+            captureDoubleTapState = openChatDoubleTapState
+        case .modifierOnly:
+            handleModifierOnlyShortcut(
+                currentFlags: currentFlags,
+                shortcut: openChatShortcut,
+                onTrigger: onConversationTrigger
+            )
+        case .keyCombo:
+            break
+        }
+    }
+
+    private func handleModifierOnlyShortcut(
+        currentFlags: NSEvent.ModifierFlags,
+        shortcut: CaptureShortcut,
+        onTrigger: (() -> Void)?
+    ) {
         guard shortcut.kind == .modifierOnly else { return }
         guard currentFlags == shortcut.modifierFlags else { return }
         guard lastModifierFlags != shortcut.modifierFlags else { return }
@@ -285,15 +519,30 @@ final class HotkeyManager {
     }
 
     private func handleLocalKeyDown(_ event: NSEvent) {
-        guard shortcut.kind == .keyCombo else { return }
-        guard !event.isARepeat else { return }
-        guard event.keyCode == shortcut.keyCode else { return }
-        guard filteredModifierFlags(from: event.modifierFlags) == shortcut.modifierFlags else { return }
-
-        onTrigger?()
+        guard !isShortcutHandlingPaused else { return }
+        handleKeyComboShortcuts(from: event)
     }
 
     private func handleGlobalKeyDown(_ event: NSEvent) {
+        guard !isShortcutHandlingPaused else { return }
+        handleKeyComboShortcuts(from: event)
+    }
+
+    private func handleKeyComboShortcuts(from event: NSEvent) {
+        if shortcutsShareBinding, openChatShortcut.kind == .keyCombo {
+            handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
+            return
+        }
+
+        handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
+        handleKeyComboShortcut(event, shortcut: captureShortcut, onTrigger: onTrigger)
+    }
+
+    private func handleKeyComboShortcut(
+        _ event: NSEvent,
+        shortcut: CaptureShortcut,
+        onTrigger: (() -> Void)?
+    ) {
         guard shortcut.kind == .keyCombo else { return }
         guard !event.isARepeat else { return }
         guard event.keyCode == shortcut.keyCode else { return }
@@ -306,7 +555,12 @@ final class HotkeyManager {
         flags.intersection(CaptureShortcut.modifierFlagsMask)
     }
 
-    private func handleDoubleModifierShortcut(_ event: NSEvent) {
+    private func handleDoubleModifierShortcut(
+        _ event: NSEvent,
+        shortcut: CaptureShortcut,
+        state: inout DoubleModifierTapState,
+        onTrigger: (() -> Void)?
+    ) {
         guard shortcut.kind == .doubleModifier else { return }
 
         let currentFlags = filteredModifierFlags(from: event.modifierFlags)
@@ -314,51 +568,24 @@ final class HotkeyManager {
         let now = CFAbsoluteTimeGetCurrent()
 
         if currentFlags == targetModifier, !lastModifierFlags.contains(targetModifier) {
-            bareCaptureModifierKeyDownAt = now
+            state.bareModifierKeyDownAt = now
             return
         }
 
         if currentFlags.isEmpty, lastModifierFlags == targetModifier {
-            defer { bareCaptureModifierKeyDownAt = nil }
+            defer { state.bareModifierKeyDownAt = nil }
 
-            guard let bareCaptureModifierKeyDownAt,
-                  now - bareCaptureModifierKeyDownAt <= DoubleShiftConfig.maxTapDuration else {
+            guard let bareModifierKeyDownAt = state.bareModifierKeyDownAt,
+                  now - bareModifierKeyDownAt <= DoubleShiftConfig.maxTapDuration else {
                 return
             }
 
-            if let lastBareCaptureModifierTapAt,
-               now - lastBareCaptureModifierTapAt <= DoubleShiftConfig.maxIntervalBetweenTaps {
-                self.lastBareCaptureModifierTapAt = nil
+            if let lastBareModifierTapAt = state.lastBareModifierTapAt,
+               now - lastBareModifierTapAt <= DoubleShiftConfig.maxIntervalBetweenTaps {
+                state.lastBareModifierTapAt = nil
                 onTrigger?()
             } else {
-                lastBareCaptureModifierTapAt = now
-            }
-        }
-    }
-
-    private func handleDoubleShift(_ event: NSEvent) {
-        let currentFlags = filteredModifierFlags(from: event.modifierFlags)
-        let now = CFAbsoluteTimeGetCurrent()
-
-        if currentFlags == [.shift], !lastModifierFlags.contains(.shift) {
-            bareShiftKeyDownAt = now
-            return
-        }
-
-        if currentFlags.isEmpty, lastModifierFlags == [.shift] {
-            defer { bareShiftKeyDownAt = nil }
-
-            guard let bareShiftKeyDownAt,
-                  now - bareShiftKeyDownAt <= DoubleShiftConfig.maxTapDuration else {
-                return
-            }
-
-            if let lastBareShiftTapAt,
-               now - lastBareShiftTapAt <= DoubleShiftConfig.maxIntervalBetweenTaps {
-                self.lastBareShiftTapAt = nil
-                onConversationTrigger?()
-            } else {
-                lastBareShiftTapAt = now
+                state.lastBareModifierTapAt = now
             }
         }
     }

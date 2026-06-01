@@ -58,4 +58,88 @@ struct CuePrototypeTests {
         #expect(resolved[messageID]?.first?.data == pngData)
     }
 
+    @Test func conversationExportIncludesAttachmentMetadataWithoutImageBytes() throws {
+        let conversationID = UUID()
+        let messageID = UUID()
+        let imagePath = "conversation-attachments/\(conversationID.uuidString)/\(messageID.uuidString)/image.png"
+
+        let conversation = PersistedConversation(
+            id: conversationID,
+            title: "Export Test",
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 2_000),
+            messages: [
+                ConversationMessageDTO(
+                    id: messageID,
+                    role: .user,
+                    text: "Summarize this",
+                    attachedBrowserPages: [
+                        AttachedBrowserPageReference(
+                            url: "https://example.com/thread",
+                            pageTitle: "Example Thread",
+                            browserName: "Safari"
+                        )
+                    ],
+                    attachedSelectedTexts: [
+                        AttachedSelectedTextReference(text: "Selected passage", appName: "Mail")
+                    ],
+                    imageAttachments: [
+                        ConversationImageAttachmentReference(
+                            id: UUID(),
+                            mimeType: "image/png",
+                            relativePath: imagePath
+                        )
+                    ]
+                ),
+                ConversationMessageDTO(role: .assistant, text: "Here is the summary.")
+            ]
+        )
+
+        let data = try ConversationExport.encode(conversation)
+        let document = try JSONDecoder().decode(ExportedConversationDocument.self, from: data)
+
+        #expect(document.messages.count == 2)
+        let userMessage = try #require(document.messages.first)
+        #expect(userMessage.attachments.count == 3)
+
+        let imageAttachment = try #require(userMessage.attachments.first { $0.kind == .image })
+        #expect(imageAttachment.path?.hasSuffix(imagePath) == true)
+
+        #expect(userMessage.attachments.contains(.webPage(url: "https://example.com/thread")))
+        #expect(userMessage.attachments.contains(.selectedText("Selected passage")))
+    }
+
+}
+
+private struct ExportedConversationDocument: Decodable {
+    struct Message: Decodable {
+        let attachments: [ExportedConversationAttachment]
+    }
+
+    let messages: [Message]
+}
+
+private struct ExportedConversationAttachment: Decodable, Equatable {
+    enum Kind: String, Decodable {
+        case image
+        case webPage
+        case selectedText
+    }
+
+    let kind: Kind
+    let path: String?
+    let url: String?
+    let text: String?
+
+    static func image(path: String) -> Self {
+        Self(kind: .image, path: path, url: nil, text: nil)
+    }
+
+    static func webPage(url: String) -> Self {
+        Self(kind: .webPage, path: nil, url: url, text: nil)
+    }
+
+    static func selectedText(_ text: String) -> Self {
+        Self(kind: .selectedText, path: nil, url: nil, text: text)
+    }
 }
