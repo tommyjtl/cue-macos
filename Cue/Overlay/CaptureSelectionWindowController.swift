@@ -5,20 +5,18 @@ import Foundation
 @MainActor
 final class CaptureSelectionWindowController: NSObject {
     private enum EscapeCancelConfig {
-        static let doubleTapInterval: TimeInterval = 0.35
         static let duplicateEventTolerance: TimeInterval = 0.001
     }
 
     private enum EscapeHandlingResult {
         case ignoredDuplicate
-        case consumeOnly
         case cancel
 
         var consumesEvent: Bool {
             switch self {
             case .ignoredDuplicate:
                 false
-            case .consumeOnly, .cancel:
+            case .cancel:
                 true
             }
         }
@@ -30,7 +28,6 @@ final class CaptureSelectionWindowController: NSObject {
     private var localEscapeMonitor: Any?
     private var globalEscapeMonitor: Any?
     private var previouslyActiveApplication: NSRunningApplication?
-    private var pendingEscapeTapAt: TimeInterval?
     private var lastHandledEscapeEventTimestamp: TimeInterval?
 
     func selectRect() async throws -> ScreenCaptureSelection {
@@ -44,7 +41,6 @@ final class CaptureSelectionWindowController: NSObject {
 
         isCompleting = false
         previouslyActiveApplication = NSWorkspace.shared.frontmostApplication
-        pendingEscapeTapAt = nil
         lastHandledEscapeEventTimestamp = nil
         buildOverlayWindows(for: target)
         installEscapeMonitorsIfNeeded()
@@ -141,7 +137,6 @@ final class CaptureSelectionWindowController: NSObject {
         removeEscapeMonitors()
         overlayWindows.forEach { $0.orderOut(nil) }
         overlayWindows.removeAll()
-        pendingEscapeTapAt = nil
         lastHandledEscapeEventTimestamp = nil
 
         if let previouslyActiveApplication,
@@ -163,7 +158,8 @@ final class CaptureSelectionWindowController: NSObject {
             switch self.handleEscapeKeyEvent(timestamp: event.timestamp) {
             case .ignoredDuplicate:
                 return event
-            case .consumeOnly, .cancel:
+            case .cancel:
+                self.cancel()
                 return nil
             }
         }
@@ -187,16 +183,7 @@ final class CaptureSelectionWindowController: NSObject {
         }
 
         lastHandledEscapeEventTimestamp = timestamp
-
-        if let pendingEscapeTapAt,
-           timestamp - pendingEscapeTapAt <= EscapeCancelConfig.doubleTapInterval {
-            self.pendingEscapeTapAt = nil
-            cancel()
-            return .cancel
-        }
-
-        pendingEscapeTapAt = timestamp
-        return .consumeOnly
+        return .cancel
     }
 
     private func removeEscapeMonitors() {

@@ -30,6 +30,7 @@ final class AppModel {
 
     private enum UserDefaultsKey {
         static let captureShortcut = "capture-shortcut"
+        static let openChatShortcut = "open-chat-shortcut"
         static let dismissChatShortcut = "dismiss-chat-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let obsidianExportConfiguration = "obsidian-export-configuration"
@@ -104,6 +105,7 @@ final class AppModel {
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
     var captureShortcut: CaptureShortcut
+    var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
     var conversationConfiguration: ConversationConfiguration
     var obsidianExportConfiguration: ObsidianExportConfiguration
@@ -139,6 +141,7 @@ final class AppModel {
         conversationStore = try? ConversationStore()
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
+        openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
         obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
@@ -218,7 +221,8 @@ final class AppModel {
         self.hotkeyManager = hotkeyManager
 
         hotkeyManager.startMonitoring(
-            shortcut: captureShortcut,
+            captureShortcut: captureShortcut,
+            openChatShortcut: openChatShortcut,
             onTrigger: { [weak self] in
                 Task { @MainActor in
                     self?.handleCaptureShortcutTrigger()
@@ -316,10 +320,18 @@ final class AppModel {
     func updateCaptureShortcut(_ shortcut: CaptureShortcut) {
         let normalizedShortcut = shortcut.normalized
         captureShortcut = normalizedShortcut
-        hotkeyManager?.update(shortcut: normalizedShortcut)
+        hotkeyManager?.updateCaptureShortcut(normalizedShortcut)
         saveCaptureShortcut(normalizedShortcut)
         buildStatus = "Add-to-context shortcut updated to \(normalizedShortcut.displayString)."
         setCaptureErrorMessage(nil, source: .selectedText)
+    }
+
+    func updateOpenChatShortcut(_ shortcut: CaptureShortcut) {
+        let normalizedShortcut = shortcut.normalizedOpenChat()
+        openChatShortcut = normalizedShortcut
+        hotkeyManager?.updateOpenChatShortcut(normalizedShortcut)
+        saveOpenChatShortcut(normalizedShortcut)
+        buildStatus = "Open chat shortcut updated to \(normalizedShortcut.displayString)."
     }
 
     func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
@@ -447,7 +459,11 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        openFreshContextConversationComposer()
+        if conversationMessages.isEmpty {
+            openFreshContextConversationComposer()
+        } else {
+            openContextConversationComposer()
+        }
     }
 
     private func openFreshContextConversationComposer() {
@@ -460,10 +476,11 @@ final class AppModel {
     }
 
     private func openContextConversationComposer() {
+        setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
         refreshOverlayPresentationState()
-        buildStatus = "Context composer opened."
+        buildStatus = "Context conversation resumed."
     }
 
     func handleConversationSend(_ draft: String) {
@@ -567,6 +584,10 @@ final class AppModel {
         updateCaptureShortcut(.defaultValue)
     }
 
+    func resetOpenChatShortcutToDefault() {
+        updateOpenChatShortcut(.defaultOpenChatValue)
+    }
+
     func resetDismissChatShortcutToDefault() {
         updateDismissChatShortcut(.defaultValue)
     }
@@ -589,6 +610,26 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.captureShortcut)
+    }
+
+    private static func loadOpenChatShortcut() -> CaptureShortcut {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.openChatShortcut) else {
+            return .defaultOpenChatValue
+        }
+
+        do {
+            return try JSONDecoder().decode(CaptureShortcut.self, from: data).normalizedOpenChat()
+        } catch {
+            return .defaultOpenChatValue
+        }
+    }
+
+    private func saveOpenChatShortcut(_ shortcut: CaptureShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.openChatShortcut)
     }
 
     private static func loadDismissChatShortcut() -> DismissChatShortcut {
@@ -1255,227 +1296,6 @@ struct ConversationSettingsSection: View {
         }
         configuration.ollamaThinkingMode = normalizedMode
         appState.updateConversationConfiguration(configuration)
-    }
-}
-
-struct ShortcutSettingsSection: View {
-    @Environment(AppModel.self) private var appState
-    @State private var draftShortcut = CaptureShortcut.defaultValue
-    @State private var draftDismissChatShortcut = DismissChatShortcut.defaultValue
-    @State private var isEditingAddToContext = false
-    @State private var isEditingDismissChat = false
-
-    var body: some View {
-        SettingsCard {
-            SettingsRow(
-                title: ShortcutFeatureCopy.openChatName,
-                subtitle: ShortcutFeatureCopy.openChatBinding
-            )
-
-            SettingsRowDivider()
-
-            SettingsRow(
-                title: ShortcutFeatureCopy.dismissChatName,
-                subtitle: appState.dismissChatShortcut.displayString
-            ) {
-                SettingsChangeButton(isEditingDismissChat ? "Done" : "Change") {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isEditingDismissChat.toggle()
-                    }
-                }
-            }
-
-            if isEditingDismissChat {
-                SettingsRowDivider()
-
-                SettingsInsetContent {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SettingsFootnote(ShortcutFeatureCopy.dismissChatSummary)
-
-                        SettingsFieldGroup(label: "Key") {
-                            Picker("Key", selection: dismissChatKeyCodeBinding) {
-                                ForEach(DismissChatShortcut.availableKeys) { option in
-                                    Text(option.title).tag(option.keyCode)
-                                }
-                            }
-                            .labelsHidden()
-                        }
-
-                        SettingsFieldGroup(label: "Press Count") {
-                            Stepper(value: dismissChatPressCountBinding, in: 2...5) {
-                                Text("\(draftDismissChatShortcut.pressCount) presses")
-                            }
-                        }
-
-                        SettingsChangeButton("Reset to Default") {
-                            draftDismissChatShortcut = .defaultValue
-                        }
-
-                        SettingsFootnote("Default is Triple Escape. Accessibility permission is required for the shortcut to work while another app is focused.")
-                    }
-                }
-            }
-
-            SettingsRowDivider()
-
-            SettingsRow(
-                title: ShortcutFeatureCopy.addToContextName,
-                subtitle: appState.captureShortcut.displayString
-            ) {
-                SettingsChangeButton(isEditingAddToContext ? "Done" : "Change") {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isEditingAddToContext.toggle()
-                    }
-                }
-            }
-
-            if isEditingAddToContext {
-                SettingsRowDivider()
-
-                SettingsInsetContent {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SettingsFootnote(ShortcutFeatureCopy.openChatSummary)
-                        SettingsFootnote(ShortcutFeatureCopy.addToContextSummary)
-
-                        SettingsFieldGroup(label: "Shortcut Type") {
-                            Picker("Shortcut Type", selection: $draftShortcut.kind) {
-                                ForEach(CaptureShortcut.Kind.allCases) { kind in
-                                    Text(kind.title).tag(kind)
-                                }
-                            }
-                            .labelsHidden()
-                        }
-
-                        if draftShortcut.kind == .doubleModifier {
-                            SettingsFieldGroup(label: "Modifier") {
-                                Picker("Modifier", selection: doubleModifierRawValueBinding) {
-                                    ForEach(CaptureShortcut.doubleModifierOptions, id: \.rawValue) { modifier in
-                                        Text(modifierTitle(for: modifier)).tag(modifier.rawValue)
-                                    }
-                                }
-                                .labelsHidden()
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle("Shift", isOn: modifierBinding(.shift))
-                                Toggle("Option", isOn: modifierBinding(.option))
-                                Toggle("Control", isOn: modifierBinding(.control))
-                                Toggle("Command", isOn: modifierBinding(.command))
-                            }
-                        }
-
-                        if draftShortcut.kind == .keyCombo {
-                            SettingsFieldGroup(label: "Key") {
-                                Picker("Key", selection: keyCodeBinding) {
-                                    ForEach(CaptureShortcut.availableKeys) { option in
-                                        Text(option.title).tag(option.keyCode)
-                                    }
-                                }
-                                .labelsHidden()
-                            }
-                        }
-
-                        SettingsChangeButton("Reset to Default") {
-                            draftShortcut = .defaultValue
-                        }
-
-                        SettingsFootnote("Default is Double Option. If double-modifier detection feels unreliable on your machine, switch Add To Context to a held modifier combo or a key combination.")
-                    }
-                }
-            }
-        }
-        .onAppear {
-            draftShortcut = appState.captureShortcut
-            draftDismissChatShortcut = appState.dismissChatShortcut
-        }
-        .onChange(of: draftShortcut, initial: false) { _, newValue in
-            let normalizedShortcut = newValue.normalized
-            if normalizedShortcut != newValue {
-                draftShortcut = normalizedShortcut
-                return
-            }
-
-            appState.updateCaptureShortcut(normalizedShortcut)
-        }
-        .onChange(of: draftDismissChatShortcut, initial: false) { _, newValue in
-            let normalizedShortcut = newValue.normalized
-            if normalizedShortcut != newValue {
-                draftDismissChatShortcut = normalizedShortcut
-                return
-            }
-
-            appState.updateDismissChatShortcut(normalizedShortcut)
-        }
-    }
-
-    private var dismissChatKeyCodeBinding: Binding<UInt16> {
-        Binding(
-            get: {
-                draftDismissChatShortcut.keyCode
-            },
-            set: { keyCode in
-                draftDismissChatShortcut.keyCode = keyCode
-            }
-        )
-    }
-
-    private var dismissChatPressCountBinding: Binding<Int> {
-        Binding(
-            get: {
-                draftDismissChatShortcut.pressCount
-            },
-            set: { pressCount in
-                draftDismissChatShortcut.pressCount = pressCount
-            }
-        )
-    }
-
-    private func modifierBinding(_ modifier: NSEvent.ModifierFlags) -> Binding<Bool> {
-        Binding(
-            get: {
-                draftShortcut.contains(modifier)
-            },
-            set: { isEnabled in
-                draftShortcut.setModifier(modifier, enabled: isEnabled)
-            }
-        )
-    }
-
-    private var doubleModifierRawValueBinding: Binding<UInt> {
-        Binding(
-            get: {
-                CaptureShortcut.doubleModifierOptions.first(where: { draftShortcut.modifierFlags.contains($0) })?.rawValue ?? NSEvent.ModifierFlags.option.rawValue
-            },
-            set: { rawValue in
-                draftShortcut.modifierFlagsRawValue = rawValue
-            }
-        )
-    }
-
-    private func modifierTitle(for modifier: NSEvent.ModifierFlags) -> String {
-        switch modifier {
-        case .option:
-            return "Option"
-        case .control:
-            return "Control"
-        case .command:
-            return "Command"
-        case .shift:
-            return "Shift"
-        default:
-            return "Modifier"
-        }
-    }
-
-    private var keyCodeBinding: Binding<UInt16> {
-        Binding(
-            get: {
-                draftShortcut.keyCode ?? CaptureShortcut.defaultKeyOption.keyCode
-            },
-            set: { keyCode in
-                draftShortcut.keyCode = keyCode
-            }
-        )
     }
 }
 

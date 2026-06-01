@@ -37,7 +37,7 @@ final class ContextStackWindowController: NSWindowController {
     private var panelDragObserver: NSObjectProtocol?
 
     init(
-        dismissChatShortcut: DismissChatShortcut = .defaultValue,
+        dismissChatShortcut: DismissChatShortcut? = nil,
         onClear: @escaping () -> Void,
         isCaptureInProgress: @escaping () -> Bool,
         onCancelSend: @escaping () -> Void,
@@ -47,7 +47,7 @@ final class ContextStackWindowController: NSWindowController {
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
         onPresentationChange: @escaping () -> Void
     ) {
-        self.dismissChatShortcut = dismissChatShortcut.normalized
+        self.dismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
         self.onClear = onClear
         self.isCaptureInProgress = isCaptureInProgress
         self.onCancelSend = onCancelSend
@@ -365,7 +365,9 @@ final class ContextStackWindowController: NSWindowController {
             object: panel,
             queue: .main
         ) { [weak self] _ in
-            self?.chatPanelManuallyPositioned = true
+            Task { @MainActor in
+                self?.chatPanelManuallyPositioned = true
+            }
         }
     }
 

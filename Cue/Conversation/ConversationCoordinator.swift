@@ -21,15 +21,15 @@ final class ConversationCoordinator {
 
     init(
         conversationService: ConversationService? = nil,
-        obsidianNoteService: ObsidianNoteService = ObsidianNoteService(),
+        obsidianNoteService: ObsidianNoteService? = nil,
         conversationStore: ConversationStore?,
-        messageAttachmentStore: MessageAttachmentStore = MessageAttachmentStore(),
+        messageAttachmentStore: MessageAttachmentStore? = nil,
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
-        self.obsidianNoteService = obsidianNoteService
+        self.obsidianNoteService = obsidianNoteService ?? ObsidianNoteService()
         self.conversationStore = conversationStore
-        self.messageAttachmentStore = messageAttachmentStore
+        self.messageAttachmentStore = messageAttachmentStore ?? MessageAttachmentStore()
         self.onSessionChange = onSessionChange
         publishSession()
     }

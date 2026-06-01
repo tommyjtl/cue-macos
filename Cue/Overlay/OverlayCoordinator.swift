@@ -20,7 +20,7 @@ final class OverlayCoordinator {
     private var snapshot = Snapshot()
 
     init(
-        dismissChatShortcut: DismissChatShortcut = .defaultValue,
+        dismissChatShortcut: DismissChatShortcut? = nil,
         onClear: @escaping () -> Void,
         isCaptureInProgress: @escaping () -> Bool,
         onCancelSend: @escaping () -> Void,

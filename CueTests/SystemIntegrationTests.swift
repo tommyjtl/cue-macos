@@ -247,21 +247,24 @@ struct SystemIntegrationTests {
         #expect(matched?.displayID == 1)
     }
 
-    @Test func dismissChatShortcutDefaultsToTripleEscape() {
+    @Test func dismissChatShortcutDefaultsToDoubleEscape() {
         let shortcut = DismissChatShortcut.defaultValue.normalized
 
         #expect(shortcut.keyCode == DismissChatShortcut.escapeKeyCode)
-        #expect(shortcut.pressCount == 3)
-        #expect(shortcut.displayString == "Triple Escape")
+        #expect(shortcut.pressCount == 2)
+        #expect(shortcut.displayString == "Double Escape")
     }
 
     @Test func repeatedKeyPressTrackerRequiresConfiguredPressCountWithinInterval() {
         let shortcut = DismissChatShortcut.defaultValue.normalized
         var tracker = RepeatedKeyPressTracker()
+        let step = DismissChatShortcut.duplicateEventTolerance
 
-        #expect(!tracker.registerPress(shortcut: shortcut))
-        #expect(!tracker.registerPress(shortcut: shortcut))
-        #expect(tracker.registerPress(shortcut: shortcut))
+        let first = tracker.registerPress(shortcut: shortcut, now: 0)
+        let second = tracker.registerPress(shortcut: shortcut, now: step)
+
+        #expect(!first)
+        #expect(second)
         #expect(tracker.pressCount == 0)
     }
 
@@ -269,9 +272,12 @@ struct SystemIntegrationTests {
         let shortcut = DismissChatShortcut.defaultValue.normalized
         var tracker = RepeatedKeyPressTracker()
 
-        #expect(!tracker.registerPress(shortcut: shortcut))
+        let first = tracker.registerPress(shortcut: shortcut, now: 0)
+        let duplicate = tracker.registerPress(shortcut: shortcut, now: 0.01)
+
+        #expect(!first)
         #expect(tracker.pressCount == 1)
-        #expect(!tracker.registerPress(shortcut: shortcut))
+        #expect(!duplicate)
         #expect(tracker.pressCount == 1)
     }
 }
