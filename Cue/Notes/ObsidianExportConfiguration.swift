@@ -56,7 +56,7 @@ struct ObsidianExportConfiguration: Codable, Equatable {
 
     var validationError: String? {
         guard isEnabled else {
-            return nil
+            return "Enable \"Save /note to Obsidian\" in Settings."
         }
 
         guard let folderURL = exportFolderURL else {

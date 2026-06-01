@@ -122,18 +122,11 @@ final class ConversationCoordinator {
             return
         }
 
-        var contextLabels: [String] = []
-        if screenshots.count == 1 {
-            contextLabels.append("Screenshot")
-        } else if screenshots.count > 1 {
-            contextLabels.append("\(screenshots.count) Screenshots")
-        }
-        contextLabels.append(contentsOf: selectedTextContexts.map { snapshot in
-            snapshot.appName.map { "Text from \($0)" } ?? "Selected Text"
-        })
-        contextLabels.append(contentsOf: browserPageContexts.map { page in
-            browserPageContextLabel(page)
-        })
+        let contextLabels = attachedContextLabels(
+            screenshots: screenshots,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
 
         let conversationID = ensureActiveConversationID()
         let userMessageID = UUID()
@@ -285,18 +278,11 @@ final class ConversationCoordinator {
             return
         }
 
-        var contextLabels: [String] = []
-        if screenshots.count == 1 {
-            contextLabels.append("Screenshot")
-        } else if screenshots.count > 1 {
-            contextLabels.append("\(screenshots.count) Screenshots")
-        }
-        contextLabels.append(contentsOf: selectedTextContexts.map { snapshot in
-            snapshot.appName.map { "Text from \($0)" } ?? "Selected Text"
-        })
-        contextLabels.append(contentsOf: browserPageContexts.map { page in
-            browserPageContextLabel(page)
-        })
+        let contextLabels = attachedContextLabels(
+            screenshots: screenshots,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
 
         let conversationID = ensureActiveConversationID()
         let userMessageID = UUID()
@@ -318,6 +304,7 @@ final class ConversationCoordinator {
             role: .user,
             text: draft,
             attachedContextLabels: contextLabels,
+            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
             imageAttachments: imageAttachments
         )
 
@@ -403,6 +390,26 @@ final class ConversationCoordinator {
         }
 
         return messages
+    }
+
+    private func attachedContextLabels(
+        screenshots: [CapturedScreenshot],
+        selectedTextContexts: [AttachedTextContext],
+        browserPageContexts: [BrowserPageContext]
+    ) -> [String] {
+        var labels: [String] = []
+        if screenshots.count == 1 {
+            labels.append("Screenshot")
+        } else if screenshots.count > 1 {
+            labels.append("\(screenshots.count) Screenshots")
+        }
+        labels.append(contentsOf: selectedTextContexts.map { snapshot in
+            snapshot.appName.map { "Text from \($0)" } ?? "Selected Text"
+        })
+        labels.append(contentsOf: browserPageContexts.map { page in
+            browserPageContextLabel(page)
+        })
+        return labels
     }
 
     private func browserPageContextLabel(_ page: BrowserPageContext) -> String {
