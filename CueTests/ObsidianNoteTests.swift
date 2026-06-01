@@ -127,4 +127,25 @@ struct ObsidianNoteTests {
         #expect(ObsidianNoteWriter.fileName(from: "   ") == "note.md")
         #expect(ObsidianNoteWriter.fileName(from: "Bad/Name:Here") == "Bad-Name-Here.md")
     }
+
+    @Test func exportConfigurationRequiresEnabledToggle() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cue-obsidian-config-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootDirectory)
+        }
+
+        let disabledConfiguration = ObsidianExportConfiguration(
+            isEnabled: false,
+            exportFolderPath: rootDirectory.path
+        )
+        #expect(disabledConfiguration.validationError == "Enable \"Save /note to Obsidian\" in Settings.")
+
+        let enabledConfiguration = ObsidianExportConfiguration(
+            isEnabled: true,
+            exportFolderPath: rootDirectory.path
+        )
+        #expect(enabledConfiguration.validationError == nil)
+    }
 }
