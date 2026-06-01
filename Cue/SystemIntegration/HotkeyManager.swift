@@ -147,13 +147,129 @@ struct CaptureShortcut: Codable, Equatable {
     }
 }
 
+struct DismissChatShortcut: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case repeatedKey
+
+        var id: String { rawValue }
+
+        var title: String {
+            "Repeated Key"
+        }
+    }
+
+    static let escapeKeyCode: UInt16 = 53
+    static let defaultMaxIntervalBetweenPresses: TimeInterval = 0.35
+    static let duplicateEventTolerance: TimeInterval = 0.05
+    static let defaultValue = DismissChatShortcut(
+        kind: .repeatedKey,
+        keyCode: escapeKeyCode,
+        pressCount: 3,
+        maxIntervalBetweenPresses: defaultMaxIntervalBetweenPresses,
+        modifierFlagsRawValue: 0
+    )
+
+    static let availableKeys: [CaptureShortcut.KeyOption] = {
+        [CaptureShortcut.KeyOption(keyCode: escapeKeyCode, title: "Escape")] + CaptureShortcut.availableKeys
+    }()
+
+    var kind: Kind
+    var keyCode: UInt16
+    var pressCount: Int
+    var maxIntervalBetweenPresses: TimeInterval
+    var modifierFlagsRawValue: UInt
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifierFlagsRawValue).intersection(CaptureShortcut.modifierFlagsMask)
+    }
+
+    var normalized: DismissChatShortcut {
+        var normalized = self
+        normalized.pressCount = min(max(pressCount, 2), 5)
+        normalized.maxIntervalBetweenPresses = min(max(maxIntervalBetweenPresses, 0.15), 1.0)
+        normalized.modifierFlagsRawValue = modifierFlags.rawValue
+        if normalized.keyCode == 0 {
+            normalized.keyCode = Self.escapeKeyCode
+        }
+        return normalized
+    }
+
+    var displayString: String {
+        let keyTitle = Self.keyTitle(for: keyCode)
+        switch pressCount {
+        case 2:
+            return "Double \(keyTitle)"
+        case 3:
+            return "Triple \(keyTitle)"
+        default:
+            return "\(pressCount)× \(keyTitle)"
+        }
+    }
+
+    func matches(_ event: NSEvent) -> Bool {
+        guard kind == .repeatedKey else { return false }
+        guard event.keyCode == keyCode else { return false }
+
+        let modifierMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        return event.modifierFlags.intersection(modifierMask) == modifierFlags
+    }
+
+    static func keyTitle(for keyCode: UInt16) -> String {
+        if keyCode == escapeKeyCode {
+            return "Escape"
+        }
+
+        return CaptureShortcut.availableKeys.first(where: { $0.keyCode == keyCode })?.title ?? "Key \(keyCode)"
+    }
+}
+
+struct RepeatedKeyPressTracker {
+    private(set) var pressCount = 0
+    private var lastPressAt: TimeInterval?
+    private var lastHandledEventTimestamp: TimeInterval?
+
+    mutating func reset() {
+        pressCount = 0
+        lastPressAt = nil
+        lastHandledEventTimestamp = nil
+    }
+
+    mutating func registerPress(shortcut: DismissChatShortcut) -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+
+        if let lastHandledEventTimestamp,
+           now - lastHandledEventTimestamp < DismissChatShortcut.duplicateEventTolerance {
+            return false
+        }
+        lastHandledEventTimestamp = now
+
+        if let lastPressAt,
+           now - lastPressAt > shortcut.maxIntervalBetweenPresses {
+            pressCount = 0
+        }
+
+        pressCount += 1
+        lastPressAt = now
+
+        guard pressCount >= shortcut.pressCount else {
+            return false
+        }
+
+        reset()
+        return true
+    }
+}
+
 enum ShortcutFeatureCopy {
     static let openChatName = "Open Chat"
     static let openChatBinding = "Double Shift"
-    static let openChatSummary = "Opens the chat composer. With context already attached, starts a new chat; otherwise resumes your most recent conversation."
+    static let openChatSummary = "Opens a new chat composer near the cursor. Any attached context is included in the session."
 
     static let addToContextName = "Add To Context"
     static let addToContextSummary = "Double Option by default. Starts a screenshot region capture and attaches it to the context window."
+
+    static let dismissChatName = "Dismiss Chat"
+    static let dismissChatSummary = "Closes the chat composer while keeping the overlay available. Default is Triple Escape."
 }
 
 @MainActor

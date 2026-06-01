@@ -20,8 +20,8 @@ final class OverlayCoordinator {
     private var snapshot = Snapshot()
 
     init(
+        dismissChatShortcut: DismissChatShortcut = .defaultValue,
         onClear: @escaping () -> Void,
-        onAppDeactivate: @escaping () -> Void,
         isCaptureInProgress: @escaping () -> Bool,
         onCancelSend: @escaping () -> Void,
         onSendDraft: @escaping (String) -> Void,
@@ -31,8 +31,8 @@ final class OverlayCoordinator {
         onPresentationChange: @escaping () -> Void
     ) {
         windowController = ContextStackWindowController(
+            dismissChatShortcut: dismissChatShortcut,
             onClear: onClear,
-            onAppDeactivate: onAppDeactivate,
             isCaptureInProgress: isCaptureInProgress,
             onCancelSend: onCancelSend,
             onSendDraft: onSendDraft,
@@ -101,6 +101,14 @@ final class OverlayCoordinator {
 
     func handleEscapeRollback() {
         windowController.handleEscapeRollback()
+    }
+
+    func closeChat() {
+        windowController.closeChat()
+    }
+
+    func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        windowController.updateDismissChatShortcut(shortcut)
     }
 
     func refreshAccessibilityDependentGlobalMonitors() {

@@ -21,16 +21,17 @@ A menu-bar utility for capturing context — screenshots, clipboard text, browse
 
 1. **Add context** — copy text, capture a screenshot, or push a page from the browser extension.
 2. **Ask a question** — open the chat composer and send a prompt; Cue includes your attached context.
-3. **Dismiss** — press Escape to hide the overlay or clear the stack.
+3. **Dismiss** — close chat with the **✕** button or **Triple Escape**; press **Escape** once to clear the context stack.
 
 | Action | Default shortcut |
 |---|---|
 | Attach clipboard text to context | Double **⌘C** (copy twice in quick succession) |
 | Capture a screenshot region | Double **Option** |
 | Open chat composer | Double **Shift** |
-| Dismiss overlay / clear context | **Escape** |
+| Dismiss context stack | **Escape** |
+| Close chat composer | **✕** button, **Triple Escape**, or menu bar |
 
-Double **⌘C** uses whatever plain text is on the clipboard after your second copy — a single **⌘C** behaves normally and does not attach anything. Double **Option** always starts a screenshot region capture (it does not read selected text). With context already attached, double **Shift** opens a new chat; without context, it resumes your most recent conversation.
+Double **⌘C** uses whatever plain text is on the clipboard after your second copy — a single **⌘C** behaves normally and does not attach anything. Double **Option** always starts a screenshot region capture (it does not read selected text). Double **Shift** opens a new chat composer near the cursor; any attached context is included in that session.
 
 The double **Option** shortcut is configurable in **Settings → General**. Double **Shift** and double **⌘C** are fixed for now.
 

@@ -30,6 +30,7 @@ final class AppModel {
 
     private enum UserDefaultsKey {
         static let captureShortcut = "capture-shortcut"
+        static let dismissChatShortcut = "dismiss-chat-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let obsidianExportConfiguration = "obsidian-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
@@ -103,6 +104,7 @@ final class AppModel {
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
     var captureShortcut: CaptureShortcut
+    var dismissChatShortcut: DismissChatShortcut
     var conversationConfiguration: ConversationConfiguration
     var obsidianExportConfiguration: ObsidianExportConfiguration
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
@@ -137,6 +139,7 @@ final class AppModel {
         conversationStore = try? ConversationStore()
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
+        dismissChatShortcut = Self.loadDismissChatShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
         obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
@@ -165,14 +168,10 @@ final class AppModel {
         startPermissionMonitoring()
 
         overlayCoordinator = OverlayCoordinator(
+            dismissChatShortcut: dismissChatShortcut,
             onClear: { [weak self] in
                 Task { @MainActor in
                     self?.clearContextStack()
-                }
-            },
-            onAppDeactivate: { [weak self] in
-                Task { @MainActor in
-                    self?.handleAppDeactivationWhileContextVisible()
                 }
             },
             isCaptureInProgress: { [weak self] in
@@ -323,6 +322,14 @@ final class AppModel {
         setCaptureErrorMessage(nil, source: .selectedText)
     }
 
+    func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        let normalizedShortcut = shortcut.normalized
+        dismissChatShortcut = normalizedShortcut
+        overlayCoordinator?.updateDismissChatShortcut(normalizedShortcut)
+        saveDismissChatShortcut(normalizedShortcut)
+        buildStatus = "Dismiss chat shortcut updated to \(normalizedShortcut.displayString)."
+    }
+
     func clearContextStack() {
         cancelConversationSend(resetDraftState: false)
         contextSession?.clear()
@@ -388,37 +395,16 @@ final class AppModel {
         overlayCoordinator?.relayout()
     }
 
-    private func openMostRecentConversationChatIfAvailable() {
-        guard let mostRecent = savedConversations.first else {
-            return
-        }
-
-        conversationCoordinator?.resumeConversation(mostRecent.id)
-        // syncOverlayState is called synchronously via the coordinator callback,
-        // so viewModel.messages is populated before showChat runs.
-        overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
-        refreshOverlayPresentationState()
-        buildStatus = "Resumed \"\(mostRecent.title)\"."
-    }
-
-    func handleAppDeactivationWhileContextVisible() {
-        guard !isCaptureInProgress else {
-            return
-        }
-
-        clearContextStack()
-    }
-
-    func dismissVisibleContextOverlayIfNeeded() {
-        dismissVisibleOverlay()
-    }
-
     func dismissVisibleOverlay() {
         guard overlayCoordinator?.isVisible == true else {
             return
         }
 
-        overlayCoordinator?.handleEscapeRollback()
+        if overlayCoordinator?.isInChatMode == true {
+            overlayCoordinator?.closeChat()
+        } else {
+            overlayCoordinator?.handleEscapeRollback()
+        }
         refreshOverlayPresentationState()
     }
 
@@ -461,11 +447,7 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        if hasContextItems {
-            openFreshContextConversationComposer()
-        } else {
-            openMostRecentConversationChatIfAvailable()
-        }
+        openFreshContextConversationComposer()
     }
 
     private func openFreshContextConversationComposer() {
@@ -585,6 +567,10 @@ final class AppModel {
         updateCaptureShortcut(.defaultValue)
     }
 
+    func resetDismissChatShortcutToDefault() {
+        updateDismissChatShortcut(.defaultValue)
+    }
+
     private static func loadCaptureShortcut() -> CaptureShortcut {
         guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.captureShortcut) else {
             return .defaultValue
@@ -603,6 +589,26 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.captureShortcut)
+    }
+
+    private static func loadDismissChatShortcut() -> DismissChatShortcut {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.dismissChatShortcut) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(DismissChatShortcut.self, from: data).normalized
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveDismissChatShortcut(_ shortcut: DismissChatShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.dismissChatShortcut)
     }
 
     private static func loadConversationConfiguration() -> ConversationConfiguration {
@@ -962,7 +968,7 @@ private struct MenuBarContentView: View {
             Button("Dismiss Chat UI") {
                 appState.dismissVisibleOverlay()
             }
-        } else if appState.isContextOverlayVisible {
+        } else if appState.isContextOverlayVisible && appState.hasContextItems {
             Button("Dismiss Context") {
                 appState.dismissVisibleOverlay()
             }
@@ -1255,7 +1261,9 @@ struct ConversationSettingsSection: View {
 struct ShortcutSettingsSection: View {
     @Environment(AppModel.self) private var appState
     @State private var draftShortcut = CaptureShortcut.defaultValue
+    @State private var draftDismissChatShortcut = DismissChatShortcut.defaultValue
     @State private var isEditingAddToContext = false
+    @State private var isEditingDismissChat = false
 
     var body: some View {
         SettingsCard {
@@ -1263,6 +1271,50 @@ struct ShortcutSettingsSection: View {
                 title: ShortcutFeatureCopy.openChatName,
                 subtitle: ShortcutFeatureCopy.openChatBinding
             )
+
+            SettingsRowDivider()
+
+            SettingsRow(
+                title: ShortcutFeatureCopy.dismissChatName,
+                subtitle: appState.dismissChatShortcut.displayString
+            ) {
+                SettingsChangeButton(isEditingDismissChat ? "Done" : "Change") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isEditingDismissChat.toggle()
+                    }
+                }
+            }
+
+            if isEditingDismissChat {
+                SettingsRowDivider()
+
+                SettingsInsetContent {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SettingsFootnote(ShortcutFeatureCopy.dismissChatSummary)
+
+                        SettingsFieldGroup(label: "Key") {
+                            Picker("Key", selection: dismissChatKeyCodeBinding) {
+                                ForEach(DismissChatShortcut.availableKeys) { option in
+                                    Text(option.title).tag(option.keyCode)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+
+                        SettingsFieldGroup(label: "Press Count") {
+                            Stepper(value: dismissChatPressCountBinding, in: 2...5) {
+                                Text("\(draftDismissChatShortcut.pressCount) presses")
+                            }
+                        }
+
+                        SettingsChangeButton("Reset to Default") {
+                            draftDismissChatShortcut = .defaultValue
+                        }
+
+                        SettingsFootnote("Default is Triple Escape. Accessibility permission is required for the shortcut to work while another app is focused.")
+                    }
+                }
+            }
 
             SettingsRowDivider()
 
@@ -1334,6 +1386,7 @@ struct ShortcutSettingsSection: View {
         }
         .onAppear {
             draftShortcut = appState.captureShortcut
+            draftDismissChatShortcut = appState.dismissChatShortcut
         }
         .onChange(of: draftShortcut, initial: false) { _, newValue in
             let normalizedShortcut = newValue.normalized
@@ -1344,6 +1397,37 @@ struct ShortcutSettingsSection: View {
 
             appState.updateCaptureShortcut(normalizedShortcut)
         }
+        .onChange(of: draftDismissChatShortcut, initial: false) { _, newValue in
+            let normalizedShortcut = newValue.normalized
+            if normalizedShortcut != newValue {
+                draftDismissChatShortcut = normalizedShortcut
+                return
+            }
+
+            appState.updateDismissChatShortcut(normalizedShortcut)
+        }
+    }
+
+    private var dismissChatKeyCodeBinding: Binding<UInt16> {
+        Binding(
+            get: {
+                draftDismissChatShortcut.keyCode
+            },
+            set: { keyCode in
+                draftDismissChatShortcut.keyCode = keyCode
+            }
+        )
+    }
+
+    private var dismissChatPressCountBinding: Binding<Int> {
+        Binding(
+            get: {
+                draftDismissChatShortcut.pressCount
+            },
+            set: { pressCount in
+                draftDismissChatShortcut.pressCount = pressCount
+            }
+        )
     }
 
     private func modifierBinding(_ modifier: NSEvent.ModifierFlags) -> Binding<Bool> {
