@@ -42,7 +42,6 @@ struct ContextStackView: View {
         static let controlFontSize: CGFloat = 13
         static let cornerRadius: CGFloat = 14
         static let headerHeight: CGFloat = 44
-        static let transcriptMaxHeight: CGFloat = 280
     }
 
     @Bindable var model: ContextPanelViewModel
@@ -275,7 +274,7 @@ struct ContextStackView: View {
                         }
                     }
                 }
-                .frame(maxHeight: ComposerLayout.transcriptMaxHeight)
+                .frame(maxHeight: .infinity)
             }
 
             if model.isSending {
