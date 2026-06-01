@@ -164,6 +164,19 @@ struct CaptureShortcut: Codable, Equatable {
         modifierFlags.contains(modifier)
     }
 
+    /// Whether two shortcuts would register the same physical binding.
+    func hasSameBinding(as other: CaptureShortcut) -> Bool {
+        guard kind == other.kind else { return false }
+        guard modifierFlags == other.modifierFlags else { return false }
+
+        switch kind {
+        case .modifierOnly, .doubleModifier:
+            return true
+        case .keyCombo:
+            return keyCode == other.keyCode
+        }
+    }
+
     private func orderedModifierNames(for flags: NSEvent.ModifierFlags) -> [String] {
         var names: [String] = []
         if flags.contains(.control) { names.append("Control") }
@@ -202,7 +215,7 @@ struct DismissChatShortcut: Codable, Equatable {
     }()
 
     var kind: Kind
-    var keyCode: UInt16
+    var keyCode: UInt16?
     var pressCount: Int
     var maxIntervalBetweenPresses: TimeInterval
     var modifierFlagsRawValue: UInt
@@ -216,14 +229,14 @@ struct DismissChatShortcut: Codable, Equatable {
         normalized.pressCount = min(max(pressCount, 2), 5)
         normalized.maxIntervalBetweenPresses = min(max(maxIntervalBetweenPresses, 0.15), 1.0)
         normalized.modifierFlagsRawValue = modifierFlags.rawValue
-        if normalized.keyCode == 0 {
+        if normalized.keyCode == nil {
             normalized.keyCode = Self.escapeKeyCode
         }
         return normalized
     }
 
     var displayString: String {
-        let keyTitle = Self.keyTitle(for: keyCode)
+        let keyTitle = Self.keyTitle(for: keyCode ?? Self.escapeKeyCode)
         switch pressCount {
         case 2:
             return "Double \(keyTitle)"
@@ -236,7 +249,7 @@ struct DismissChatShortcut: Codable, Equatable {
 
     func matches(_ event: NSEvent) -> Bool {
         guard kind == .repeatedKey else { return false }
-        guard event.keyCode == keyCode else { return false }
+        guard let keyCode, event.keyCode == keyCode else { return false }
 
         let modifierMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         return event.modifierFlags.intersection(modifierMask) == modifierFlags
@@ -431,11 +444,20 @@ final class HotkeyManager {
         removeGlobalMonitors()
     }
 
+    private var shortcutsShareBinding: Bool {
+        openChatShortcut.hasSameBinding(as: captureShortcut)
+    }
+
     private func handleFlagsChanged(_ event: NSEvent) {
         guard !isShortcutHandlingPaused else { return }
 
         let currentFlags = filteredModifierFlags(from: event.modifierFlags)
         defer { lastModifierFlags = currentFlags }
+
+        if shortcutsShareBinding {
+            handleSharedBindingFlagsChanged(event, currentFlags: currentFlags)
+            return
+        }
 
         handleDoubleModifierShortcut(
             event,
@@ -462,6 +484,28 @@ final class HotkeyManager {
         )
     }
 
+    /// When Open Chat and Add To Context share a binding, route the gesture once (Open Chat wins).
+    private func handleSharedBindingFlagsChanged(_ event: NSEvent, currentFlags: NSEvent.ModifierFlags) {
+        switch openChatShortcut.kind {
+        case .doubleModifier:
+            handleDoubleModifierShortcut(
+                event,
+                shortcut: openChatShortcut,
+                state: &openChatDoubleTapState,
+                onTrigger: onConversationTrigger
+            )
+            captureDoubleTapState = openChatDoubleTapState
+        case .modifierOnly:
+            handleModifierOnlyShortcut(
+                currentFlags: currentFlags,
+                shortcut: openChatShortcut,
+                onTrigger: onConversationTrigger
+            )
+        case .keyCombo:
+            break
+        }
+    }
+
     private func handleModifierOnlyShortcut(
         currentFlags: NSEvent.ModifierFlags,
         shortcut: CaptureShortcut,
@@ -476,13 +520,19 @@ final class HotkeyManager {
 
     private func handleLocalKeyDown(_ event: NSEvent) {
         guard !isShortcutHandlingPaused else { return }
-
-        handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
-        handleKeyComboShortcut(event, shortcut: captureShortcut, onTrigger: onTrigger)
+        handleKeyComboShortcuts(from: event)
     }
 
     private func handleGlobalKeyDown(_ event: NSEvent) {
         guard !isShortcutHandlingPaused else { return }
+        handleKeyComboShortcuts(from: event)
+    }
+
+    private func handleKeyComboShortcuts(from event: NSEvent) {
+        if shortcutsShareBinding, openChatShortcut.kind == .keyCombo {
+            handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
+            return
+        }
 
         handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
         handleKeyComboShortcut(event, shortcut: captureShortcut, onTrigger: onTrigger)

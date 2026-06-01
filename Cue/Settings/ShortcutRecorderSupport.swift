@@ -62,7 +62,8 @@ extension CaptureShortcut {
 
 extension DismissChatShortcut {
     var displayTokens: [String] {
-        Array(repeating: Self.keyTitle(for: keyCode), count: pressCount)
+        let keyTitle = Self.keyTitle(for: keyCode ?? Self.escapeKeyCode)
+        return Array(repeating: keyTitle, count: pressCount)
     }
 }
 
@@ -257,61 +258,5 @@ final class ShortcutRecordingEventTap {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
-    }
-}
-
-@MainActor
-final class DismissChatShortcutRecordingSession {
-    private var presses: [UInt16] = []
-    private var lastPressAt: TimeInterval?
-
-    var previewTokens: [String] = []
-    var previewHint = "Press the same key twice to finish."
-
-    func reset() {
-        presses = []
-        lastPressAt = nil
-        previewTokens = []
-        previewHint = "Press the same key twice to finish."
-    }
-
-    func handle(_ event: NSEvent) -> DismissChatShortcut? {
-        guard event.type == .keyDown else { return nil }
-        guard !event.isARepeat else { return nil }
-        guard ShortcutRecorderSupport.filteredModifierFlags(from: event.modifierFlags).isEmpty else { return nil }
-
-        let now = event.timestamp
-        if let lastPressAt, now - lastPressAt > DismissChatShortcut.defaultMaxIntervalBetweenPresses {
-            presses = []
-        }
-
-        if let lastKey = presses.last, lastKey != event.keyCode, presses.count == 1 {
-            presses = []
-        } else if let lastKey = presses.last, lastKey != event.keyCode {
-            presses = []
-        }
-
-        presses.append(event.keyCode)
-        lastPressAt = now
-
-        previewTokens = presses.map { ShortcutRecorderSupport.keyTitle(for: $0) }
-        previewHint = presses.count == 1
-            ? "Press \(ShortcutRecorderSupport.keyTitle(for: event.keyCode)) one more time."
-            : "Shortcut recorded."
-
-        guard presses.count >= DismissChatShortcut.minimumPressCount else {
-            return nil
-        }
-
-        let shortcut = DismissChatShortcut(
-            kind: .repeatedKey,
-            keyCode: event.keyCode,
-            pressCount: presses.count,
-            maxIntervalBetweenPresses: DismissChatShortcut.defaultMaxIntervalBetweenPresses,
-            modifierFlagsRawValue: 0
-        ).normalized
-
-        previewHint = "Shortcut recorded."
-        return shortcut
     }
 }

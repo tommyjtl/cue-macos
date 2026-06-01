@@ -319,21 +319,35 @@ final class AppModel {
         )
     }
 
-    func updateCaptureShortcut(_ shortcut: CaptureShortcut) {
+    @discardableResult
+    func updateCaptureShortcut(_ shortcut: CaptureShortcut) -> Bool {
         let normalizedShortcut = shortcut.normalized
+        guard !normalizedShortcut.hasSameBinding(as: openChatShortcut) else {
+            buildStatus = "Add-to-context shortcut conflicts with Open Chat (\(openChatShortcut.displayString)). Choose a different binding."
+            return false
+        }
+
         captureShortcut = normalizedShortcut
         hotkeyManager?.updateCaptureShortcut(normalizedShortcut)
         saveCaptureShortcut(normalizedShortcut)
         buildStatus = "Add-to-context shortcut updated to \(normalizedShortcut.displayString)."
         setCaptureErrorMessage(nil, source: .selectedText)
+        return true
     }
 
-    func updateOpenChatShortcut(_ shortcut: CaptureShortcut) {
+    @discardableResult
+    func updateOpenChatShortcut(_ shortcut: CaptureShortcut) -> Bool {
         let normalizedShortcut = shortcut.normalizedOpenChat()
+        guard !normalizedShortcut.hasSameBinding(as: captureShortcut) else {
+            buildStatus = "Open chat shortcut conflicts with Add To Context (\(captureShortcut.displayString)). Choose a different binding."
+            return false
+        }
+
         openChatShortcut = normalizedShortcut
         hotkeyManager?.updateOpenChatShortcut(normalizedShortcut)
         saveOpenChatShortcut(normalizedShortcut)
         buildStatus = "Open chat shortcut updated to \(normalizedShortcut.displayString)."
+        return true
     }
 
     func setGlobalShortcutHandlingPaused(_ paused: Bool) {

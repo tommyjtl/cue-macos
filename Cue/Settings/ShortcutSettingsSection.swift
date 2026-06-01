@@ -154,19 +154,29 @@ struct ShortcutSettingsSection: View {
 
         switch role {
         case .openChat:
+            let shortcut: CaptureShortcut?
             if let pendingOpenChatShortcut {
-                appState.updateOpenChatShortcut(pendingOpenChatShortcut)
+                shortcut = pendingOpenChatShortcut
             } else if let modifierOnly = openChatRecordingSession.consumePendingModifierOnlyIfReady()?.normalizedOpenChat() {
-                appState.updateOpenChatShortcut(modifierOnly)
+                shortcut = modifierOnly
             } else {
                 return
             }
+
+            guard let shortcut, appState.updateOpenChatShortcut(shortcut) else {
+                return
+            }
         case .addToContext:
+            let shortcut: CaptureShortcut?
             if let pendingCaptureShortcut {
-                appState.updateCaptureShortcut(pendingCaptureShortcut)
+                shortcut = pendingCaptureShortcut
             } else if let modifierOnly = captureRecordingSession.consumePendingModifierOnlyIfReady()?.normalized {
-                appState.updateCaptureShortcut(modifierOnly)
+                shortcut = modifierOnly
             } else {
+                return
+            }
+
+            guard let shortcut, appState.updateCaptureShortcut(shortcut) else {
                 return
             }
         }

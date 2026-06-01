@@ -26,6 +26,10 @@ final class ContextStackWindowController: NSWindowController {
     private let hostingView: NSHostingView<ContextStackView>
     private let viewModel: ContextPanelViewModel
     private var dismissChatShortcut: DismissChatShortcut
+    /// Read from the global keyDown monitor callback (nonisolated context).
+    private nonisolated(unsafe) var globalMonitorDismissShortcut: DismissChatShortcut = .defaultValue
+    /// Read from the global keyDown monitor callback (nonisolated context).
+    private nonisolated(unsafe) var globalMonitorPanelIsVisible = false
     private var dismissShortcutPressTracker = RepeatedKeyPressTracker()
     private var displayLink: CADisplayLink?
     private var localEscapeMonitor: Any?
@@ -47,7 +51,9 @@ final class ContextStackWindowController: NSWindowController {
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
         onPresentationChange: @escaping () -> Void
     ) {
-        self.dismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
+        let normalizedDismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
+        self.dismissChatShortcut = normalizedDismissChatShortcut
+        self.globalMonitorDismissShortcut = normalizedDismissChatShortcut
         self.onClear = onClear
         self.isCaptureInProgress = isCaptureInProgress
         self.onCancelSend = onCancelSend
@@ -127,6 +133,7 @@ final class ContextStackWindowController: NSWindowController {
         cursorEnteredPanelAt = nil
         applyPlacement(anchor: point)
         presentStackPanelWithoutActivatingApp(revertingTo: previousApp)
+        globalMonitorPanelIsVisible = true
         startFollowingCursor()
         notifyPresentationChange()
     }
@@ -148,6 +155,7 @@ final class ContextStackWindowController: NSWindowController {
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        globalMonitorPanelIsVisible = true
         requestComposerFocus()
         SoundEffectPlayer.play(.chatOpened)
         notifyPresentationChange()
@@ -210,6 +218,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.browserPageContexts = []
         setPanelInteractionMode(for: .stack)
         panel.orderOut(nil)
+        globalMonitorPanelIsVisible = false
         notifyPresentationChange()
     }
 
@@ -313,7 +322,9 @@ final class ContextStackWindowController: NSWindowController {
     }
 
     func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
-        dismissChatShortcut = shortcut.normalized
+        let normalizedShortcut = shortcut.normalized
+        dismissChatShortcut = normalizedShortcut
+        globalMonitorDismissShortcut = normalizedShortcut
         resetDismissShortcutPressTracking()
     }
 
@@ -331,8 +342,14 @@ final class ContextStackWindowController: NSWindowController {
     private func installGlobalEventMonitorsIfNeeded() {
         if globalEscapeMonitor == nil {
             globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return }
+                guard self.globalMonitorPanelIsVisible else { return }
+                guard Self.couldBeOverlayDismissKeyDown(event, dismissShortcut: self.globalMonitorDismissShortcut) else {
+                    return
+                }
+
                 Task { @MainActor in
-                    guard let self, self.panel.isVisible else { return }
+                    guard self.panel.isVisible else { return }
                     _ = self.handleOverlayKeyDown(event)
                 }
             }
@@ -515,6 +532,13 @@ final class ContextStackWindowController: NSWindowController {
         let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         return event.keyCode == 53
             && event.modifierFlags.intersection(modifierFlagsMask).isEmpty
+    }
+
+    nonisolated static func couldBeOverlayDismissKeyDown(
+        _ event: NSEvent,
+        dismissShortcut: DismissChatShortcut
+    ) -> Bool {
+        isEscapeKeyEvent(event) || dismissShortcut.matches(event)
     }
 
     private func isEscapeKeyEvent(_ event: NSEvent) -> Bool {

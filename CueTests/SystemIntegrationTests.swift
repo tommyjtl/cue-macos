@@ -139,6 +139,40 @@ struct SystemIntegrationTests {
         #expect(ContextStackWindowController.isEscapeKeyEvent(event!))
     }
 
+    @Test func couldBeOverlayDismissKeyDownFiltersUnrelatedKeys() {
+        let dismissShortcut = DismissChatShortcut.defaultValue.normalized
+
+        let escapeEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
+            isARepeat: false,
+            keyCode: 53
+        )
+        let unrelatedEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        )
+
+        #expect(escapeEvent != nil)
+        #expect(unrelatedEvent != nil)
+        #expect(ContextStackWindowController.couldBeOverlayDismissKeyDown(escapeEvent!, dismissShortcut: dismissShortcut))
+        #expect(!ContextStackWindowController.couldBeOverlayDismissKeyDown(unrelatedEvent!, dismissShortcut: dismissShortcut))
+    }
+
     @Test func clipboardMonitorReadStringRequiresNonEmptyPlainText() {
         #expect(ClipboardMonitor.readString(from: makePasteboard(string: "hello")) == "hello")
         #expect(ClipboardMonitor.readString(from: makePasteboard(string: "  \n")) == nil)
@@ -255,6 +289,31 @@ struct SystemIntegrationTests {
         #expect(shortcut.displayString == "Double Escape")
     }
 
+    @Test func dismissChatShortcutNormalizationPreservesAKey() {
+        let shortcut = DismissChatShortcut(
+            kind: .repeatedKey,
+            keyCode: 0,
+            pressCount: 2,
+            maxIntervalBetweenPresses: DismissChatShortcut.defaultMaxIntervalBetweenPresses,
+            modifierFlagsRawValue: 0
+        ).normalized
+
+        #expect(shortcut.keyCode == 0)
+        #expect(shortcut.displayString == "Double A")
+    }
+
+    @Test func dismissChatShortcutNormalizationDefaultsMissingKeyCodeToEscape() {
+        let shortcut = DismissChatShortcut(
+            kind: .repeatedKey,
+            keyCode: nil,
+            pressCount: 2,
+            maxIntervalBetweenPresses: DismissChatShortcut.defaultMaxIntervalBetweenPresses,
+            modifierFlagsRawValue: 0
+        ).normalized
+
+        #expect(shortcut.keyCode == DismissChatShortcut.escapeKeyCode)
+    }
+
     @Test func repeatedKeyPressTrackerRequiresConfiguredPressCountWithinInterval() {
         let shortcut = DismissChatShortcut.defaultValue.normalized
         var tracker = RepeatedKeyPressTracker()
@@ -266,6 +325,47 @@ struct SystemIntegrationTests {
         #expect(!first)
         #expect(second)
         #expect(tracker.pressCount == 0)
+    }
+
+    @Test func captureShortcutDetectsEquivalentBindings() {
+        let doubleOption = CaptureShortcut(
+            kind: .doubleModifier,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.option.rawValue,
+            keyCode: nil
+        ).normalized
+        let otherDoubleOption = CaptureShortcut(
+            kind: .doubleModifier,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.option.rawValue,
+            keyCode: nil
+        ).normalizedOpenChat()
+
+        #expect(doubleOption.hasSameBinding(as: otherDoubleOption))
+
+        let doubleShift = CaptureShortcut(
+            kind: .doubleModifier,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.shift.rawValue,
+            keyCode: nil
+        ).normalizedOpenChat()
+        #expect(!doubleOption.hasSameBinding(as: doubleShift))
+
+        let keyCombo = CaptureShortcut(
+            kind: .keyCombo,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.rawValue,
+            keyCode: 15
+        ).normalized
+        let sameKeyCombo = CaptureShortcut(
+            kind: .keyCombo,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.rawValue,
+            keyCode: 15
+        ).normalized
+        #expect(keyCombo.hasSameBinding(as: sameKeyCombo))
+
+        let differentKeyCombo = CaptureShortcut(
+            kind: .keyCombo,
+            modifierFlagsRawValue: NSEvent.ModifierFlags.command.rawValue,
+            keyCode: 1
+        ).normalized
+        #expect(!keyCombo.hasSameBinding(as: differentKeyCombo))
     }
 
     @Test func repeatedKeyPressTrackerIgnoresDuplicateDeliveryOfSamePress() {
