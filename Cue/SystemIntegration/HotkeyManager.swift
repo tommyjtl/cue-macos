@@ -293,7 +293,7 @@ struct RepeatedKeyPressTracker {
 enum ShortcutFeatureCopy {
     static let openChatName = "Open Chat"
     static let openChatBinding = "Double Shift"
-    static let openChatSummary = "Opens chat near the cursor. Resumes the in-progress conversation when one exists, otherwise starts fresh."
+    static let openChatSummary = "Opens chat near the cursor. Resumes the active overlay conversation when one is in progress, otherwise starts fresh."
 
     static let addToContextName = "Add To Context"
     static let addToContextSummary = "Double Option by default. Starts a screenshot region capture and attaches it to the context window."
@@ -322,6 +322,7 @@ final class HotkeyManager {
     private var isMonitoring = false
     private var captureDoubleTapState = DoubleModifierTapState()
     private var openChatDoubleTapState = DoubleModifierTapState()
+    private var isShortcutHandlingPaused = false
 
     private struct DoubleModifierTapState {
         var bareModifierKeyDownAt: CFTimeInterval?
@@ -350,6 +351,10 @@ final class HotkeyManager {
 
     func updateOpenChatShortcut(_ shortcut: CaptureShortcut) {
         openChatShortcut = shortcut.normalizedOpenChat()
+    }
+
+    func setShortcutHandlingPaused(_ paused: Bool) {
+        isShortcutHandlingPaused = paused
     }
 
     /// Global monitors require Accessibility. Call when permission is granted after launch.
@@ -427,6 +432,8 @@ final class HotkeyManager {
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
+        guard !isShortcutHandlingPaused else { return }
+
         let currentFlags = filteredModifierFlags(from: event.modifierFlags)
         defer { lastModifierFlags = currentFlags }
 
@@ -468,11 +475,15 @@ final class HotkeyManager {
     }
 
     private func handleLocalKeyDown(_ event: NSEvent) {
+        guard !isShortcutHandlingPaused else { return }
+
         handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
         handleKeyComboShortcut(event, shortcut: captureShortcut, onTrigger: onTrigger)
     }
 
     private func handleGlobalKeyDown(_ event: NSEvent) {
+        guard !isShortcutHandlingPaused else { return }
+
         handleKeyComboShortcut(event, shortcut: openChatShortcut, onTrigger: onConversationTrigger)
         handleKeyComboShortcut(event, shortcut: captureShortcut, onTrigger: onTrigger)
     }

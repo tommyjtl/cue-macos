@@ -129,15 +129,18 @@ private struct ConversationHistoryView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         }
                     } else {
-                        List(selection: selectionBinding) {
-                            ForEach(appState.savedConversations) { conversation in
-                                RecentsConversationRow(conversation: conversation)
-                                    .tag(conversation.id)
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(appState.savedConversations) { conversation in
+                                    RecentsConversationRow(
+                                        conversation: conversation,
+                                        isSelected: appState.selectedSavedConversationID == conversation.id
+                                    ) {
+                                        appState.selectedSavedConversationID = conversation.id
+                                    }
+                                }
                             }
                         }
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden)
-                        .padding(10)
                         .background(
                             SettingsLayout.cardBackground,
                             in: RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous)
@@ -151,7 +154,10 @@ private struct ConversationHistoryView: View {
             ConversationTranscriptPanel(
                 title: selectedConversation?.title ?? "Conversation Preview",
                 subtitle: selectedConversation == nil ? "Select a saved conversation to inspect it here." : selectedConversation?.updatedAt.formatted(date: .abbreviated, time: .shortened) ?? "",
-                messages: selectedConversation?.messages ?? []
+                messages: selectedConversation?.messages ?? [],
+                onExportJSON: selectedConversation.map { conversation in
+                    { ConversationExportPresenter.save(conversation: conversation) }
+                }
             )
         }
         .padding(SettingsLayout.pagePadding)
@@ -165,35 +171,36 @@ private struct ConversationHistoryView: View {
 
         return appState.savedConversations.first(where: { $0.id == conversationID })
     }
-
-    private var selectionBinding: Binding<UUID?> {
-        Binding(
-            get: { appState.selectedSavedConversationID },
-            set: { appState.selectedSavedConversationID = $0 }
-        )
-    }
 }
 
 private struct RecentsConversationRow: View {
     let conversation: PersistedConversation
+    let isSelected: Bool
+    let onSelect: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(conversation.title)
-                .font(.system(size: 14, weight: .semibold))
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(conversation.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
 
-            Text(conversation.previewText)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+                Text(conversation.previewText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
-            Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+            .padding(.vertical, 10)
+            .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 6)
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
+        .buttonStyle(.plain)
     }
 }
 
@@ -275,16 +282,27 @@ private struct ConversationTranscriptPanel: View {
     let title: String
     let subtitle: String?
     let messages: [ConversationMessageDTO]
+    var onExportJSON: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
 
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 12)
+
+                if let onExportJSON {
+                    SettingsChangeButton("Export JSON", action: onExportJSON)
+                }
             }
 
             if messages.isEmpty {

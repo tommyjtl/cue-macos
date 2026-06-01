@@ -95,6 +95,7 @@ final class MessageRepository {
         var currentProcessBlocks: [ConversationProcessBlockDTO] = []
         var currentImageAttachments: [ConversationImageAttachmentReference] = []
         var currentAttachedBrowserPages: [AttachedBrowserPageReference] = []
+        var currentAttachedSelectedTexts: [AttachedSelectedTextReference] = []
 
         func flushCurrentMessage() {
             guard let currentMessageID, let currentRole else {
@@ -108,6 +109,7 @@ final class MessageRepository {
                     text: currentText,
                     processBlocks: currentProcessBlocks,
                     attachedBrowserPages: currentAttachedBrowserPages,
+                    attachedSelectedTexts: currentAttachedSelectedTexts,
                     imageAttachments: currentImageAttachments
                 )
             )
@@ -128,6 +130,7 @@ final class MessageRepository {
                 currentProcessBlocks = []
                 currentImageAttachments = []
                 currentAttachedBrowserPages = []
+                currentAttachedSelectedTexts = []
             }
 
             let partType = SQLiteRepositorySupport.string(at: 2, in: statement) ?? "text"
@@ -147,6 +150,10 @@ final class MessageRepository {
             case "browser_page":
                 if let page = AttachedBrowserPageReference.deserialized(from: partText) {
                     currentAttachedBrowserPages.append(page)
+                }
+            case "selected_text":
+                if let selectedText = AttachedSelectedTextReference.deserialized(from: partText) {
+                    currentAttachedSelectedTexts.append(selectedText)
                 }
             case "text":
                 currentText += partText
@@ -203,6 +210,14 @@ final class MessageRepository {
                 return nil
             }
             return (type: "browser_page", sortIndex: browserPageStartIndex + index, text: serialized)
+        })
+
+        let selectedTextStartIndex = partDefinitions.count
+        partDefinitions.append(contentsOf: message.attachedSelectedTexts.enumerated().compactMap { index, selectedText in
+            guard let serialized = try? selectedText.serialized() else {
+                return nil
+            }
+            return (type: "selected_text", sortIndex: selectedTextStartIndex + index, text: serialized)
         })
 
         partDefinitions.append((type: "text", sortIndex: partDefinitions.count, text: message.text))

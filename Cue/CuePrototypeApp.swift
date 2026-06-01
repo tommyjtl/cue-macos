@@ -123,6 +123,8 @@ final class AppModel {
     var isConversationInProgress = false
     var isContextOverlayVisible = false
     var isContextOverlayInChatMode = false
+    /// True while the user is in an overlay-driven conversation flow (started from context or resumed after collecting more context).
+    private var hasActiveOverlayConversationFlow = false
     let milestones: [Milestone] = [
         .init(title: "Menu Bar Utility", summary: "Primary entry point for opening the app and the first screenshot capture path."),
         .init(title: "Main Window", summary: "Conversation-focused workspace with a stable split-view layout."),
@@ -334,6 +336,10 @@ final class AppModel {
         buildStatus = "Open chat shortcut updated to \(normalizedShortcut.displayString)."
     }
 
+    func setGlobalShortcutHandlingPaused(_ paused: Bool) {
+        hotkeyManager?.setShortcutHandlingPaused(paused)
+    }
+
     func updateDismissChatShortcut(_ shortcut: DismissChatShortcut) {
         let normalizedShortcut = shortcut.normalized
         dismissChatShortcut = normalizedShortcut
@@ -346,6 +352,7 @@ final class AppModel {
         cancelConversationSend(resetDraftState: false)
         contextSession?.clear()
         conversationCoordinator?.clearSession()
+        endOverlayConversationFlow()
         overlayCoordinator?.hide()
         refreshOverlayPresentationState()
         buildStatus = "Context stack cleared."
@@ -386,6 +393,7 @@ final class AppModel {
         capturedScreenshots.removeAll()
         selectedTextContexts.removeAll()
         browserPageContexts.removeAll()
+        activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
         if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
             buildStatus = "Loaded \(conversation.title)."
@@ -399,6 +407,7 @@ final class AppModel {
         }
 
         conversationCoordinator?.resumeConversation(mostRecent.id)
+        activateOverlayConversationFlow()
         // Context (screenshots / selected text) is intentionally kept intact.
         if let conversation = savedConversations.first(where: { $0.id == mostRecent.id }) {
             buildStatus = "Loaded \(conversation.title) into the overlay."
@@ -427,6 +436,10 @@ final class AppModel {
     private func refreshOverlayPresentationState() {
         isContextOverlayVisible = overlayCoordinator?.isVisible ?? false
         isContextOverlayInChatMode = isContextOverlayVisible && (overlayCoordinator?.isInChatMode ?? false)
+
+        if !isContextOverlayVisible && !hasContextItems {
+            endOverlayConversationFlow()
+        }
     }
 
     func showMainWindow() {
@@ -459,14 +472,27 @@ final class AppModel {
     }
 
     func beginContextConversation() {
-        if conversationMessages.isEmpty {
-            openFreshContextConversationComposer()
-        } else {
+        if canResumeOverlayConversation {
             openContextConversationComposer()
+        } else {
+            openFreshContextConversationComposer()
         }
     }
 
+    private var canResumeOverlayConversation: Bool {
+        hasActiveOverlayConversationFlow && !conversationMessages.isEmpty
+    }
+
+    private func activateOverlayConversationFlow() {
+        hasActiveOverlayConversationFlow = true
+    }
+
+    private func endOverlayConversationFlow() {
+        hasActiveOverlayConversationFlow = false
+    }
+
     private func openFreshContextConversationComposer() {
+        endOverlayConversationFlow()
         conversationCoordinator?.clearSession()
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
@@ -476,6 +502,7 @@ final class AppModel {
     }
 
     private func openContextConversationComposer() {
+        activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
         overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
@@ -484,6 +511,7 @@ final class AppModel {
     }
 
     func handleConversationSend(_ draft: String) {
+        activateOverlayConversationFlow()
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,

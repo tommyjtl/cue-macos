@@ -206,6 +206,10 @@ final class CaptureShortcutRecordingSession {
         return shortcut
     }
 
+    var hasPendingModifierOnly: Bool {
+        pendingModifierOnly != nil
+    }
+
     private func singleModifier(in flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags? {
         for modifier in doubleModifierOptions where flags == modifier {
             return modifier
@@ -225,6 +229,33 @@ final class CaptureShortcutRecordingSession {
             return .control
         default:
             return []
+        }
+    }
+}
+
+@MainActor
+final class ShortcutRecordingEventTap {
+    private var monitor: Any?
+    private(set) var isActive = false
+
+    func start(onEvent: @escaping (NSEvent) -> Void) {
+        stop()
+        isActive = true
+
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self, self.isActive else { return event }
+
+            onEvent(event)
+            return nil
+        }
+    }
+
+    func stop() {
+        isActive = false
+
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
         }
     }
 }

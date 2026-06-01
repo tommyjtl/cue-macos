@@ -149,6 +149,7 @@ final class ConversationCoordinator {
             text: trimmedDraft,
             attachedContextLabels: contextLabels,
             attachedBrowserPages: browserPageContexts.map(\.attachedReference),
+            attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
         let requestMessages = contextualMessages(for: selectedTextContexts, browserPages: browserPageContexts) + session.messages + [userMessage]
@@ -305,6 +306,7 @@ final class ConversationCoordinator {
             text: draft,
             attachedContextLabels: contextLabels,
             attachedBrowserPages: browserPageContexts.map(\.attachedReference),
+            attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
 
@@ -441,6 +443,7 @@ final class ConversationCoordinator {
             processBlocks: existingMessage.processBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
             attachedBrowserPages: existingMessage.attachedBrowserPages,
+            attachedSelectedTexts: existingMessage.attachedSelectedTexts,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -484,6 +487,7 @@ final class ConversationCoordinator {
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
             attachedBrowserPages: existingMessage.attachedBrowserPages,
+            attachedSelectedTexts: existingMessage.attachedSelectedTexts,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -523,6 +527,7 @@ final class ConversationCoordinator {
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
             attachedBrowserPages: existingMessage.attachedBrowserPages,
+            attachedSelectedTexts: existingMessage.attachedSelectedTexts,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -549,6 +554,7 @@ final class ConversationCoordinator {
             processBlocks: existingMessage.processBlocks + [block],
             attachedContextLabels: existingMessage.attachedContextLabels,
             attachedBrowserPages: existingMessage.attachedBrowserPages,
+            attachedSelectedTexts: existingMessage.attachedSelectedTexts,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -570,6 +576,7 @@ final class ConversationCoordinator {
                 processBlocks: message.processBlocks,
                 attachedContextLabels: session.messages[index].attachedContextLabels,
                 attachedBrowserPages: session.messages[index].attachedBrowserPages,
+                attachedSelectedTexts: session.messages[index].attachedSelectedTexts,
                 imageAttachments: session.messages[index].imageAttachments
             )
         } else {

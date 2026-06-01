@@ -65,9 +65,11 @@ struct ShortcutSettingReadOnlyRow: View {
 struct ShortcutKeyPreview: View {
     let tokens: [String]
     let isRecording: Bool
+    let isFocused: Bool
     var escapeCancelsRecording = true
     let onEvent: (NSEvent) -> Bool
     let onCancelRecording: () -> Void
+    let onFocusChange: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -91,18 +93,34 @@ struct ShortcutKeyPreview: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isRecording ? Color.accentColor.opacity(0.85) : .primary.opacity(0.08), lineWidth: isRecording ? 1.5 : 1)
+                .strokeBorder(borderColor, lineWidth: borderWidth)
         }
+        .shadow(color: isRecording && isFocused ? Color.accentColor.opacity(0.22) : .clear, radius: 6, y: 1)
         .overlay {
             if isRecording {
                 ShortcutRecorderEventCaptureView(
                     isRecording: true,
                     escapeCancelsRecording: escapeCancelsRecording,
                     onEvent: onEvent,
-                    onCancelRecording: onCancelRecording
+                    onCancelRecording: onCancelRecording,
+                    onFocusChange: onFocusChange
                 )
             }
         }
+        .allowsHitTesting(isRecording)
+    }
+
+    private var borderColor: Color {
+        guard isRecording else {
+            return .primary.opacity(0.08)
+        }
+
+        return isFocused ? Color.accentColor : Color.accentColor.opacity(0.55)
+    }
+
+    private var borderWidth: CGFloat {
+        guard isRecording else { return 1 }
+        return isFocused ? 2 : 1.5
     }
 }
 
@@ -110,11 +128,15 @@ struct ShortcutSettingInlineRow: View {
     let title: String
     let tokens: [String]
     let isRecording: Bool
+    let isFocused: Bool
+    let canCommit: Bool
     let isChangeDisabled: Bool
     var escapeCancelsRecording = true
     let onChange: () -> Void
+    let onDone: () -> Void
     let onEvent: (NSEvent) -> Bool
     let onCancelRecording: () -> Void
+    let onFocusChange: (Bool) -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -128,13 +150,20 @@ struct ShortcutSettingInlineRow: View {
                 ShortcutKeyPreview(
                     tokens: tokens,
                     isRecording: isRecording,
+                    isFocused: isFocused,
                     escapeCancelsRecording: escapeCancelsRecording,
                     onEvent: onEvent,
-                    onCancelRecording: onCancelRecording
+                    onCancelRecording: onCancelRecording,
+                    onFocusChange: onFocusChange
                 )
 
-                SettingsChangeButton("Change", action: onChange)
-                    .disabled(isChangeDisabled)
+                if isRecording {
+                    SettingsChangeButton("Done", action: onDone)
+                        .disabled(!canCommit)
+                } else {
+                    SettingsChangeButton("Change", action: onChange)
+                        .disabled(isChangeDisabled)
+                }
             }
         }
         .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
@@ -147,12 +176,14 @@ struct ShortcutRecorderEventCaptureView: NSViewRepresentable {
     var escapeCancelsRecording = true
     let onEvent: (NSEvent) -> Bool
     let onCancelRecording: () -> Void
+    let onFocusChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> ShortcutRecorderCaptureView {
         let view = ShortcutRecorderCaptureView()
         view.escapeCancelsRecording = escapeCancelsRecording
         view.onEvent = onEvent
         view.onCancelRecording = onCancelRecording
+        view.onFocusChange = onFocusChange
         return view
     }
 
@@ -160,7 +191,12 @@ struct ShortcutRecorderEventCaptureView: NSViewRepresentable {
         nsView.escapeCancelsRecording = escapeCancelsRecording
         nsView.onEvent = onEvent
         nsView.onCancelRecording = onCancelRecording
+        nsView.onFocusChange = onFocusChange
         nsView.setRecording(isRecording)
+    }
+
+    static func dismantleNSView(_ nsView: ShortcutRecorderCaptureView, coordinator: ()) {
+        nsView.teardown()
     }
 }
 
@@ -169,10 +205,15 @@ final class ShortcutRecorderCaptureView: NSView {
     var escapeCancelsRecording = true
     var onEvent: ((NSEvent) -> Bool)?
     var onCancelRecording: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
     private var isRecording = false
-    private var localMonitor: Any?
 
     override var acceptsFirstResponder: Bool { true }
+
+    override var focusRingType: NSFocusRingType {
+        get { .none }
+        set { }
+    }
 
     func setRecording(_ isRecording: Bool) {
         guard self.isRecording != isRecording else { return }
@@ -180,10 +221,16 @@ final class ShortcutRecorderCaptureView: NSView {
 
         if isRecording {
             window?.makeFirstResponder(self)
-            installMonitor()
         } else {
-            removeMonitor()
+            teardown()
         }
+    }
+
+    func teardown() {
+        if window?.firstResponder === self {
+            window?.makeFirstResponder(nil)
+        }
+        reportFocus(false)
     }
 
     override func viewDidMoveToWindow() {
@@ -194,8 +241,24 @@ final class ShortcutRecorderCaptureView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard isRecording else { return }
         window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let becameFirstResponder = super.becomeFirstResponder()
+        if becameFirstResponder {
+            reportFocus(true)
+        }
+        return becameFirstResponder
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resignedFirstResponder = super.resignFirstResponder()
+        if resignedFirstResponder {
+            reportFocus(false)
+        }
+        return resignedFirstResponder
     }
 
     override func keyDown(with event: NSEvent) {
@@ -204,18 +267,12 @@ final class ShortcutRecorderCaptureView: NSView {
             return
         }
 
-        if event.keyCode == 53 {
-            if escapeCancelsRecording {
-                onCancelRecording?()
-            } else if onEvent?(event) == true {
-                return
-            }
+        if event.keyCode == 53, escapeCancelsRecording {
+            onCancelRecording?()
             return
         }
 
-        if onEvent?(event) == true {
-            return
-        }
+        _ = onEvent?(event)
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -227,39 +284,7 @@ final class ShortcutRecorderCaptureView: NSView {
         _ = onEvent?(event)
     }
 
-    private func installMonitor() {
-        removeMonitor()
-
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            guard let self, self.isRecording else { return event }
-
-            if event.type == .keyDown, event.keyCode == 53 {
-                if self.escapeCancelsRecording {
-                    self.onCancelRecording?()
-                } else if self.onEvent?(event) == true {
-                    return nil
-                }
-                return event
-            }
-
-            if self.onEvent?(event) == true {
-                return nil
-            }
-
-            return event
-        }
-    }
-
-    private func removeMonitor() {
-        if let localMonitor {
-            NSEvent.removeMonitor(localMonitor)
-            self.localMonitor = nil
-        }
-    }
-
-    deinit {
-        if let localMonitor {
-            NSEvent.removeMonitor(localMonitor)
-        }
+    private func reportFocus(_ isFocused: Bool) {
+        onFocusChange?(isFocused)
     }
 }
