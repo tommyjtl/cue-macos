@@ -93,7 +93,8 @@ final class ConversationCoordinator {
         browserPageContexts: [BrowserPageContext],
         setStatus: @escaping @MainActor (String) -> Void,
         setError: @escaping @MainActor (String?) -> Void,
-        syncPanel: @escaping @MainActor () -> Void
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
     ) {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDraft.isEmpty else {
@@ -115,7 +116,8 @@ final class ConversationCoordinator {
                 browserPageContexts: browserPageContexts,
                 setStatus: setStatus,
                 setError: setError,
-                syncPanel: syncPanel
+                syncPanel: syncPanel,
+                onDebugLog: onDebugLog
             )
             return
         }
@@ -153,6 +155,7 @@ final class ConversationCoordinator {
             role: .user,
             text: trimmedDraft,
             attachedContextLabels: contextLabels,
+            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
             imageAttachments: imageAttachments
         )
         let requestMessages = contextualMessages(for: selectedTextContexts, browserPages: browserPageContexts) + session.messages + [userMessage]
@@ -273,7 +276,8 @@ final class ConversationCoordinator {
         browserPageContexts: [BrowserPageContext],
         setStatus: @escaping @MainActor (String) -> Void,
         setError: @escaping @MainActor (String?) -> Void,
-        syncPanel: @escaping @MainActor () -> Void
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
     ) {
         if let validationError = obsidianConfiguration.validationError {
             setError(validationError)
@@ -349,7 +353,8 @@ final class ConversationCoordinator {
                     conversationMessages: conversationMessages,
                     contextualMessages: contextualMessages,
                     browserPageContexts: browserPageContexts,
-                    messageAttachments: messageAttachments
+                    messageAttachments: messageAttachments,
+                    onDebugLog: onDebugLog
                 )
 
                 session.messages.append(
@@ -403,9 +408,9 @@ final class ConversationCoordinator {
     private func browserPageContextLabel(_ page: BrowserPageContext) -> String {
         let title = page.pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty {
-            return page.url
+            return page.displayDomain
         }
-        return "\(title) · \(page.url)"
+        return title
     }
 
     private func appendAssistantDelta(
@@ -428,6 +433,7 @@ final class ConversationCoordinator {
             text: existingMessage.text + delta,
             processBlocks: existingMessage.processBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -470,6 +476,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -508,6 +515,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -533,6 +541,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: existingMessage.processBlocks + [block],
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -553,6 +562,7 @@ final class ConversationCoordinator {
                 text: message.text,
                 processBlocks: message.processBlocks,
                 attachedContextLabels: session.messages[index].attachedContextLabels,
+                attachedBrowserPages: session.messages[index].attachedBrowserPages,
                 imageAttachments: session.messages[index].imageAttachments
             )
         } else {

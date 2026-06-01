@@ -94,6 +94,7 @@ final class MessageRepository {
         var currentText = ""
         var currentProcessBlocks: [ConversationProcessBlockDTO] = []
         var currentImageAttachments: [ConversationImageAttachmentReference] = []
+        var currentAttachedBrowserPages: [AttachedBrowserPageReference] = []
 
         func flushCurrentMessage() {
             guard let currentMessageID, let currentRole else {
@@ -106,6 +107,7 @@ final class MessageRepository {
                     role: currentRole,
                     text: currentText,
                     processBlocks: currentProcessBlocks,
+                    attachedBrowserPages: currentAttachedBrowserPages,
                     imageAttachments: currentImageAttachments
                 )
             )
@@ -125,6 +127,7 @@ final class MessageRepository {
                 currentText = ""
                 currentProcessBlocks = []
                 currentImageAttachments = []
+                currentAttachedBrowserPages = []
             }
 
             let partType = SQLiteRepositorySupport.string(at: 2, in: statement) ?? "text"
@@ -140,6 +143,10 @@ final class MessageRepository {
             case "image":
                 if let attachment = ConversationImageAttachmentReference.deserialized(from: partText) {
                     currentImageAttachments.append(attachment)
+                }
+            case "browser_page":
+                if let page = AttachedBrowserPageReference.deserialized(from: partText) {
+                    currentAttachedBrowserPages.append(page)
                 }
             case "text":
                 currentText += partText
@@ -189,6 +196,15 @@ final class MessageRepository {
             }
             return (type: "image", sortIndex: imageStartIndex + index, text: serialized)
         })
+
+        let browserPageStartIndex = partDefinitions.count
+        partDefinitions.append(contentsOf: message.attachedBrowserPages.enumerated().compactMap { index, page in
+            guard let serialized = try? page.serialized() else {
+                return nil
+            }
+            return (type: "browser_page", sortIndex: browserPageStartIndex + index, text: serialized)
+        })
+
         partDefinitions.append((type: "text", sortIndex: partDefinitions.count, text: message.text))
 
         let partSQL = """

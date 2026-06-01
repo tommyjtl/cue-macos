@@ -19,6 +19,7 @@ final class AppModel {
             case conversation = "Conversation"
             case persistence = "Persistence"
             case clipboard = "Clipboard"
+            case obsidianNote = "Obsidian Note"
         }
 
         let id = UUID()
@@ -499,10 +500,19 @@ final class AppModel {
             },
             syncPanel: { [weak self] in
                 self?.syncOverlayState()
+            },
+            onDebugLog: { [weak self] message in
+                self?.appendDebugLog(message, source: .obsidianNote)
             }
         )
         contextSession?.clear()
         syncOverlayState()
+    }
+
+    func resetObsidianNoteSystemPrompt() {
+        var configuration = obsidianExportConfiguration
+        configuration.noteSystemPrompt = ObsidianNotePrompts.defaultBase
+        updateObsidianExportConfiguration(configuration)
     }
 
     func updateObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {

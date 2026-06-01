@@ -51,7 +51,9 @@ struct ObsidianNoteTests {
                 title: "LocalStorage Pitfalls",
                 body: "## Takeaways\n\n- Avoid storing objects directly",
                 sourceURL: "https://example.com/article",
-                references: [],
+                references: [
+                    ObsidianNoteWriter.Reference(title: "Example Article", url: "https://example.com/article")
+                ],
                 createdAt: createdAt,
                 exportFolderURL: rootDirectory
             )
@@ -59,16 +61,70 @@ struct ObsidianNoteTests {
 
         #expect(result.title == "LocalStorage Pitfalls")
         #expect(result.fileURL.path.contains("2026-05-30"))
-        #expect(result.fileURL.lastPathComponent == "14-32 - localstorage-pitfalls.md")
+        #expect(result.fileURL.lastPathComponent == "LocalStorage Pitfalls.md")
 
         let markdown = try String(contentsOf: result.fileURL, encoding: .utf8)
         #expect(markdown.contains("title: \"LocalStorage Pitfalls\""))
         #expect(markdown.contains("source: \"https://example.com/article\""))
         #expect(markdown.contains("## Takeaways"))
+        #expect(markdown.contains("## References"))
+        #expect(markdown.contains("[Example Article](https://example.com/article)"))
     }
 
-    @Test func noteWriterSlugifiesTitles() {
-        #expect(ObsidianNoteWriter.slugify("Hello, World!") == "hello-world")
-        #expect(ObsidianNoteWriter.slugify("   ") == "note")
+    @Test func noteWriterAppendsReferencesSection() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cue-obsidian-ref-test-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootDirectory)
+        }
+
+        let writer = ObsidianNoteWriter()
+        let result = try writer.write(
+            ObsidianNoteWriter.WriteInput(
+                title: "Test Note",
+                body: "## Takeaways\n\n- One thing learned",
+                sourceURL: "https://example.com/page",
+                references: [
+                    ObsidianNoteWriter.Reference(title: "Example Page", url: "https://example.com/page")
+                ],
+                createdAt: Date(),
+                exportFolderURL: rootDirectory
+            )
+        )
+
+        let markdown = try String(contentsOf: result.fileURL, encoding: .utf8)
+        #expect(markdown.contains("## References"))
+        #expect(markdown.contains("[Example Page](https://example.com/page)"))
+    }
+
+    @Test func collectReferencesUsesPersistedConversationPages() {
+        let references = ObsidianNoteService.collectReferences(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: [
+                ConversationMessageDTO(
+                    role: .user,
+                    text: "what is this video about?",
+                    attachedBrowserPages: [
+                        AttachedBrowserPageReference(
+                            url: "https://www.youtube.com/watch?v=example",
+                            pageTitle: "Chinese comedy roast compilation",
+                            browserName: "Chrome"
+                        )
+                    ]
+                ),
+                ConversationMessageDTO(role: .user, text: "/note")
+            ]
+        )
+
+        #expect(references.count == 1)
+        #expect(references[0].url == "https://www.youtube.com/watch?v=example")
+        #expect(references[0].title == "Chinese comedy roast compilation")
+    }
+
+    @Test func noteWriterSanitizesFileNames() {
+        #expect(ObsidianNoteWriter.fileName(from: "Hello, World!") == "Hello, World!.md")
+        #expect(ObsidianNoteWriter.fileName(from: "   ") == "note.md")
+        #expect(ObsidianNoteWriter.fileName(from: "Bad/Name:Here") == "Bad-Name-Here.md")
     }
 }

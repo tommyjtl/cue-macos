@@ -49,13 +49,13 @@ struct ObsidianNoteWriter {
             throw ObsidianNoteWriterError.writeFailed("Cue could not create the date folder: \(error.localizedDescription)")
         }
 
-        let timePrefix = Self.timePrefixFormatter.string(from: input.createdAt)
-        let slug = Self.slugify(trimmedTitle)
-        var fileURL = dateDirectory.appendingPathComponent("\(timePrefix) - \(slug).md", isDirectory: false)
+        let fileName = Self.fileName(from: trimmedTitle)
+        var fileURL = dateDirectory.appendingPathComponent(fileName, isDirectory: false)
 
         var collisionIndex = 2
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
         while FileManager.default.fileExists(atPath: fileURL.path) {
-            fileURL = dateDirectory.appendingPathComponent("\(timePrefix) - \(slug)-\(collisionIndex).md", isDirectory: false)
+            fileURL = dateDirectory.appendingPathComponent("\(baseName)-\(collisionIndex).md", isDirectory: false)
             collisionIndex += 1
         }
 
@@ -63,6 +63,7 @@ struct ObsidianNoteWriter {
             title: trimmedTitle,
             body: input.body,
             sourceURL: input.sourceURL,
+            references: input.references,
             createdAt: input.createdAt
         )
 
@@ -75,33 +76,37 @@ struct ObsidianNoteWriter {
         return WriteResult(fileURL: fileURL, title: trimmedTitle)
     }
 
-    static func slugify(_ title: String) -> String {
-        let lowered = title.lowercased()
-        let allowed = lowered.map { character -> Character in
-            if character.isLetter || character.isNumber {
-                return character
-            }
-            if character.isWhitespace || character == "-" {
+    static func fileName(from title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "note.md"
+        }
+
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|")
+        let sanitizedScalars = trimmed.unicodeScalars.map { scalar -> Character in
+            if invalidCharacters.contains(scalar) {
                 return "-"
             }
-            return "-"
+            return Character(scalar)
         }
 
-        let collapsed = String(allowed)
+        let sanitized = String(sanitizedScalars)
             .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
 
-        if collapsed.isEmpty {
-            return "note"
+        guard !sanitized.isEmpty else {
+            return "note.md"
         }
 
-        return String(collapsed.prefix(60))
+        return "\(String(sanitized.prefix(120))).md"
     }
 
     private static func buildMarkdown(
         title: String,
         body: String,
         sourceURL: String?,
+        references: [Reference],
         createdAt: Date
     ) -> String {
         var frontmatterLines = [
@@ -117,12 +122,35 @@ struct ObsidianNoteWriter {
 
         frontmatterLines.append("---")
 
-        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let noteBody = appendReferencesSection(to: body, references: references)
+        let trimmedBody = noteBody.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedBody.isEmpty {
             return frontmatterLines.joined(separator: "\n") + "\n"
         }
 
         return frontmatterLines.joined(separator: "\n") + "\n\n" + trimmedBody + "\n"
+    }
+
+    private static func appendReferencesSection(to body: String, references: [Reference]) -> String {
+        guard !references.isEmpty else {
+            return body
+        }
+
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedBody.localizedCaseInsensitiveContains("## References") {
+            return trimmedBody
+        }
+
+        let referenceLines = references.map { reference in
+            "- [\(reference.title)](\(reference.url))"
+        }
+        let referencesSection = "## References\n\n" + referenceLines.joined(separator: "\n")
+
+        if trimmedBody.isEmpty {
+            return referencesSection
+        }
+
+        return trimmedBody + "\n\n" + referencesSection
     }
 
     private static func yamlEscaped(_ value: String) -> String {
@@ -140,14 +168,6 @@ struct ObsidianNoteWriter {
         return formatter
     }
 
-    private static var timePrefixFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "HH-mm"
-        return formatter
-    }
 
     private static var iso8601Formatter: ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()

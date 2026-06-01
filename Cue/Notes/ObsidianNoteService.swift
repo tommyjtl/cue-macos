@@ -33,7 +33,8 @@ struct ObsidianNoteService {
         conversationMessages: [ConversationMessageDTO],
         contextualMessages: [ConversationMessageDTO],
         browserPageContexts: [BrowserPageContext],
-        messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
+        messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
+        onDebugLog: ((String) -> Void)? = nil
     ) async throws -> ObsidianNoteWriter.WriteResult {
         if let validationError = obsidianConfiguration.validationError {
             throw ObsidianNoteServiceError.missingConfiguration(validationError)
@@ -46,7 +47,8 @@ struct ObsidianNoteService {
         let noteConfiguration = configuration.forNoteGeneration
         let references = Self.collectReferences(
             browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages
+            contextualMessages: contextualMessages,
+            conversationMessages: conversationMessages
         )
         let sourceURL = references.first?.url
         var requestMessages = contextualMessages + conversationMessages
@@ -55,24 +57,51 @@ struct ObsidianNoteService {
         }
 
         let request = ConversationRequestDTO(
-            systemPrompt: Self.noteGenerationSystemPrompt(userHint: userHint, references: references),
+            systemPrompt: Self.noteGenerationSystemPrompt(
+                configuration: obsidianConfiguration,
+                userHint: userHint,
+                references: references
+            ),
             messages: requestMessages,
             messageAttachments: messageAttachments
         )
 
+        ObsidianNoteGenerationLogger.logRequest(
+            userHint: userHint,
+            configuration: noteConfiguration,
+            browserPageContexts: browserPageContexts,
+            contextualMessages: contextualMessages,
+            conversationMessages: conversationMessages,
+            references: references,
+            request: request,
+            onDebugLog: onDebugLog
+        )
+
         let response = try await conversationService.send(request: request, configuration: noteConfiguration)
         let generatedContent = try Self.parseGeneratedContent(from: response.message.text)
+        let writerReferences = references.map { ObsidianNoteWriter.Reference(title: $0.title, url: $0.url) }
 
-        return try noteWriter.write(
+        let result = try noteWriter.write(
             ObsidianNoteWriter.WriteInput(
                 title: generatedContent.title,
                 body: generatedContent.body,
                 sourceURL: sourceURL,
-                references: references.map { ObsidianNoteWriter.Reference(title: $0.title, url: $0.url) },
+                references: writerReferences,
                 createdAt: Date(),
                 exportFolderURL: exportFolderURL
             )
         )
+
+        if let markdown = try? String(contentsOf: result.fileURL, encoding: .utf8) {
+            ObsidianNoteGenerationLogger.logWriteResult(
+                fileURL: result.fileURL,
+                references: writerReferences,
+                markdown: markdown,
+                onDebugLog: onDebugLog
+            )
+        }
+
+        return result
     }
 
     struct NoteReference: Equatable {
@@ -81,34 +110,44 @@ struct ObsidianNoteService {
         let browserName: String
     }
 
-    private static func collectReferences(
+    static func collectReferences(
         browserPageContexts: [BrowserPageContext],
-        contextualMessages: [ConversationMessageDTO]
+        contextualMessages: [ConversationMessageDTO],
+        conversationMessages: [ConversationMessageDTO]
     ) -> [NoteReference] {
         var references: [NoteReference] = []
         var seenURLs = Set<String>()
 
-        for page in browserPageContexts {
-            guard seenURLs.insert(page.url).inserted else {
-                continue
+        func appendReference(title: String, url: String, browserName: String) {
+            guard seenURLs.insert(url).inserted else {
+                return
             }
 
             references.append(
                 NoteReference(
-                    title: displayTitle(for: page.pageTitle, url: page.url),
-                    url: page.url,
-                    browserName: page.browserName
+                    title: displayTitle(for: title, url: url),
+                    url: url,
+                    browserName: browserName
                 )
             )
         }
 
+        for page in browserPageContexts {
+            appendReference(title: page.pageTitle, url: page.url, browserName: page.browserName)
+        }
+
         for message in contextualMessages where message.role == .system {
-            guard let reference = referenceFromContextMessage(message),
-                  seenURLs.insert(reference.url).inserted else {
+            guard let reference = referenceFromContextMessage(message) else {
                 continue
             }
 
-            references.append(reference)
+            appendReference(title: reference.title, url: reference.url, browserName: reference.browserName)
+        }
+
+        for message in conversationMessages {
+            for page in message.attachedBrowserPages {
+                appendReference(title: page.pageTitle, url: page.url, browserName: page.browserName)
+            }
         }
 
         return references
@@ -164,38 +203,30 @@ struct ObsidianNoteService {
             Attached web page references for this note:
             \(lines.joined(separator: "\n"))
 
-            Include every reference above in the note's ## References section as markdown links.
+            Cue will append these as markdown links in a ## References section.
             """
         )
     }
 
-    private static func noteGenerationSystemPrompt(userHint: String, references: [NoteReference]) -> String {
-        var prompt = """
-        You turn a Cue conversation into a structured Obsidian markdown note.
-
-        Respond with ONLY valid JSON using this shape:
-        {"title":"Short descriptive title","body":"Markdown note body"}
-
-        Rules for the JSON values:
-        - title: concise, specific, under 80 characters
-        - body: markdown using ## Takeaways, ## Details, and ## References when relevant
-        - Use bullet points for takeaways
-        - Do not invent facts not supported by the conversation or attached context
-        - Do not wrap the JSON in markdown fences
-        """
+    private static func noteGenerationSystemPrompt(
+        configuration: ObsidianExportConfiguration,
+        userHint: String,
+        references: [NoteReference]
+    ) -> String {
+        var prompt = ObsidianNotePrompts.resolvedBasePrompt(from: configuration)
 
         if !references.isEmpty {
-            let referenceLines = references.map { "- [\($0.title)](\($0.url))" }.joined(separator: "\n")
+            let referenceLines = references.map { "- \($0.title): \($0.url)" }.joined(separator: "\n")
             prompt += """
 
 
-            The note must include a ## References section with these markdown links:
+            These web page references will be appended to the note automatically:
             \(referenceLines)
             """
         } else {
             prompt += """
 
-            If web page sources appear in the conversation, include them in a ## References section as markdown links.
+            If web page sources appear in the conversation, mention them in Details when relevant.
             """
         }
 
