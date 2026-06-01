@@ -61,6 +61,7 @@ private struct GeneralSettingsView: View {
                 SoundEffectsSettingsSection()
                 ShortcutSettingsSection()
                 ConversationSettingsSection()
+                ObsidianSettingsSection()
             }
         }
     }

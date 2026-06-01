@@ -197,6 +197,31 @@ struct ConversationProcessBlockDTO: Identifiable, Equatable {
     }
 }
 
+struct AttachedBrowserPageReference: Codable, Equatable, Hashable {
+    let url: String
+    let pageTitle: String
+    let browserName: String
+
+    func serialized() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(codingPath: [], debugDescription: "Could not encode browser page reference.")
+            )
+        }
+        return value
+    }
+
+    static func deserialized(from value: String) -> AttachedBrowserPageReference? {
+        guard let data = value.data(using: .utf8) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(AttachedBrowserPageReference.self, from: data)
+    }
+}
+
 struct ConversationMessageDTO: Identifiable, Equatable {
     enum Role: String, Codable {
         case system
@@ -209,6 +234,7 @@ struct ConversationMessageDTO: Identifiable, Equatable {
     let text: String
     let processBlocks: [ConversationProcessBlockDTO]
     let attachedContextLabels: [String]
+    let attachedBrowserPages: [AttachedBrowserPageReference]
     let imageAttachments: [ConversationImageAttachmentReference]
 
     nonisolated init(
@@ -219,12 +245,14 @@ struct ConversationMessageDTO: Identifiable, Equatable {
         isThinkingComplete: Bool = true,
         processBlocks: [ConversationProcessBlockDTO] = [],
         attachedContextLabels: [String] = [],
+        attachedBrowserPages: [AttachedBrowserPageReference] = [],
         imageAttachments: [ConversationImageAttachmentReference] = []
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.attachedContextLabels = attachedContextLabels
+        self.attachedBrowserPages = attachedBrowserPages
         self.imageAttachments = imageAttachments
         if processBlocks.isEmpty, let thinkingText = thinkingText?.nilIfBlank {
             self.processBlocks = [ConversationProcessBlockDTO(kind: .thinking, text: thinkingText, isComplete: isThinkingComplete)]

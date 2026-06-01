@@ -15,4 +15,8 @@ struct BrowserPageContext: Identifiable, Hashable, Sendable {
         guard let host = URL(string: url)?.host else { return url }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
+
+    var attachedReference: AttachedBrowserPageReference {
+        AttachedBrowserPageReference(url: url, pageTitle: pageTitle, browserName: browserName)
+    }
 }

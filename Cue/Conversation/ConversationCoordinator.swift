@@ -11,6 +11,7 @@ final class ConversationCoordinator {
     }
 
     private let conversationService: ConversationService
+    private let obsidianNoteService: ObsidianNoteService
     private let conversationStore: ConversationStore?
     private let messageAttachmentStore: MessageAttachmentStore
     private let onSessionChange: @MainActor (SessionSnapshot) -> Void
@@ -20,11 +21,13 @@ final class ConversationCoordinator {
 
     init(
         conversationService: ConversationService? = nil,
+        obsidianNoteService: ObsidianNoteService = ObsidianNoteService(),
         conversationStore: ConversationStore?,
         messageAttachmentStore: MessageAttachmentStore = MessageAttachmentStore(),
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
+        self.obsidianNoteService = obsidianNoteService
         self.conversationStore = conversationStore
         self.messageAttachmentStore = messageAttachmentStore
         self.onSessionChange = onSessionChange
@@ -84,12 +87,14 @@ final class ConversationCoordinator {
     func send(
         draft: String,
         configuration: ConversationConfiguration,
+        obsidianConfiguration: ObsidianExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
         setStatus: @escaping @MainActor (String) -> Void,
         setError: @escaping @MainActor (String?) -> Void,
-        syncPanel: @escaping @MainActor () -> Void
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
     ) {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDraft.isEmpty else {
@@ -97,6 +102,23 @@ final class ConversationCoordinator {
         }
 
         guard !session.isConversationInProgress else {
+            return
+        }
+
+        if let noteCommand = NoteCommand.parse(from: trimmedDraft) {
+            sendObsidianNote(
+                noteCommand: noteCommand,
+                draft: trimmedDraft,
+                configuration: configuration,
+                obsidianConfiguration: obsidianConfiguration,
+                screenshots: screenshots,
+                selectedTextContexts: selectedTextContexts,
+                browserPageContexts: browserPageContexts,
+                setStatus: setStatus,
+                setError: setError,
+                syncPanel: syncPanel,
+                onDebugLog: onDebugLog
+            )
             return
         }
 
@@ -110,7 +132,7 @@ final class ConversationCoordinator {
             snapshot.appName.map { "Text from \($0)" } ?? "Selected Text"
         })
         contextLabels.append(contentsOf: browserPageContexts.map { page in
-            page.pageTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? page.url : page.pageTitle
+            browserPageContextLabel(page)
         })
 
         let conversationID = ensureActiveConversationID()
@@ -133,6 +155,7 @@ final class ConversationCoordinator {
             role: .user,
             text: trimmedDraft,
             attachedContextLabels: contextLabels,
+            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
             imageAttachments: imageAttachments
         )
         let requestMessages = contextualMessages(for: selectedTextContexts, browserPages: browserPageContexts) + session.messages + [userMessage]
@@ -243,6 +266,119 @@ final class ConversationCoordinator {
         }
     }
 
+    private func sendObsidianNote(
+        noteCommand: NoteCommand.Parsed,
+        draft: String,
+        configuration: ConversationConfiguration,
+        obsidianConfiguration: ObsidianExportConfiguration,
+        screenshots: [CapturedScreenshot],
+        selectedTextContexts: [AttachedTextContext],
+        browserPageContexts: [BrowserPageContext],
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
+    ) {
+        if let validationError = obsidianConfiguration.validationError {
+            setError(validationError)
+            setStatus("Obsidian note export is not configured.")
+            return
+        }
+
+        var contextLabels: [String] = []
+        if screenshots.count == 1 {
+            contextLabels.append("Screenshot")
+        } else if screenshots.count > 1 {
+            contextLabels.append("\(screenshots.count) Screenshots")
+        }
+        contextLabels.append(contentsOf: selectedTextContexts.map { snapshot in
+            snapshot.appName.map { "Text from \($0)" } ?? "Selected Text"
+        })
+        contextLabels.append(contentsOf: browserPageContexts.map { page in
+            browserPageContextLabel(page)
+        })
+
+        let conversationID = ensureActiveConversationID()
+        let userMessageID = UUID()
+
+        let imageAttachments: [ConversationImageAttachmentReference]
+        do {
+            imageAttachments = try messageAttachmentStore.saveImages(
+                from: screenshots,
+                conversationID: conversationID,
+                messageID: userMessageID
+            )
+        } catch {
+            setError(error.localizedDescription)
+            return
+        }
+
+        let userMessage = ConversationMessageDTO(
+            id: userMessageID,
+            role: .user,
+            text: draft,
+            attachedContextLabels: contextLabels,
+            imageAttachments: imageAttachments
+        )
+
+        session.messages.append(userMessage)
+        persistConversationSnapshot(conversationID: conversationID, setError: setError)
+        session.isConversationInProgress = true
+        publishSession()
+        setStatus("Writing Obsidian note with \(configuration.providerDisplayName)...")
+        setError(nil)
+        syncPanel()
+
+        let contextualMessages = contextualMessages(
+            for: selectedTextContexts,
+            browserPages: browserPageContexts
+        )
+        let conversationMessages = session.messages
+
+        cancelTask()
+        conversationTask = Task { @MainActor in
+            defer {
+                conversationTask = nil
+                session.isConversationInProgress = false
+                publishSession()
+                syncPanel()
+            }
+
+            do {
+                let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
+                let result = try await obsidianNoteService.generateAndSave(
+                    userHint: noteCommand.userHint,
+                    configuration: configuration,
+                    obsidianConfiguration: obsidianConfiguration,
+                    conversationMessages: conversationMessages,
+                    contextualMessages: contextualMessages,
+                    browserPageContexts: browserPageContexts,
+                    messageAttachments: messageAttachments,
+                    onDebugLog: onDebugLog
+                )
+
+                session.messages.append(
+                    ConversationMessageDTO(
+                        role: .assistant,
+                        text: "Saved to Obsidian: `\(result.fileURL.path)`"
+                    )
+                )
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setStatus("Saved Obsidian note \"\(result.title)\".")
+            } catch is CancellationError {
+                setStatus("Obsidian note export cancelled.")
+            } catch {
+                let message = error.localizedDescription
+                session.messages.append(ConversationMessageDTO(role: .system, text: message))
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setError(message)
+                setStatus("Obsidian note export failed.")
+            }
+        }
+    }
+
     private func cancelTask() {
         conversationTask?.cancel()
         conversationTask = nil
@@ -269,6 +405,14 @@ final class ConversationCoordinator {
         return messages
     }
 
+    private func browserPageContextLabel(_ page: BrowserPageContext) -> String {
+        let title = page.pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty {
+            return page.displayDomain
+        }
+        return title
+    }
+
     private func appendAssistantDelta(
         _ delta: String,
         to messageID: UUID,
@@ -289,6 +433,7 @@ final class ConversationCoordinator {
             text: existingMessage.text + delta,
             processBlocks: existingMessage.processBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -331,6 +476,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -369,6 +515,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: updatedProcessBlocks,
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -394,6 +541,7 @@ final class ConversationCoordinator {
             text: existingMessage.text,
             processBlocks: existingMessage.processBlocks + [block],
             attachedContextLabels: existingMessage.attachedContextLabels,
+            attachedBrowserPages: existingMessage.attachedBrowserPages,
             imageAttachments: existingMessage.imageAttachments
         )
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
@@ -414,6 +562,7 @@ final class ConversationCoordinator {
                 text: message.text,
                 processBlocks: message.processBlocks,
                 attachedContextLabels: session.messages[index].attachedContextLabels,
+                attachedBrowserPages: session.messages[index].attachedBrowserPages,
                 imageAttachments: session.messages[index].imageAttachments
             )
         } else {

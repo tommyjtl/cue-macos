@@ -888,7 +888,7 @@ private struct ComposerTextField: NSViewRepresentable {
     let onEscape: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSubmit: onSubmit, onEscape: onEscape)
+        Coordinator(text: $text, fontSize: fontSize, onSubmit: onSubmit, onEscape: onEscape)
     }
 
     func makeNSView(context: Context) -> NSTextField {
@@ -930,6 +930,11 @@ private struct ComposerTextField: NSViewRepresentable {
             }
         }
 
+        if let editor = textField.currentEditor() as? NSTextView,
+           let font = textField.font {
+            context.coordinator.applySlashCommandHighlighting(to: editor, text: textField.stringValue, font: font)
+        }
+
         if context.coordinator.lastFocusRequestID != focusRequestID {
             context.coordinator.lastFocusRequestID = focusRequestID
             textField.window?.makeKey()
@@ -946,12 +951,20 @@ private struct ComposerTextField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         @Binding var text: String
+        let fontSize: CGFloat
         var onSubmit: () -> Void
         var onEscape: () -> Void
         var lastFocusRequestID: UUID?
+        private var isApplyingHighlight = false
 
-        init(text: Binding<String>, onSubmit: @escaping () -> Void, onEscape: @escaping () -> Void) {
+        init(
+            text: Binding<String>,
+            fontSize: CGFloat,
+            onSubmit: @escaping () -> Void,
+            onEscape: @escaping () -> Void
+        ) {
             _text = text
+            self.fontSize = fontSize
             self.onSubmit = onSubmit
             self.onEscape = onEscape
         }
@@ -969,7 +982,22 @@ private struct ComposerTextField: NSViewRepresentable {
                 return
             }
 
-            text = textField.stringValue
+            let value = textField.stringValue
+            text = value
+
+            guard !isApplyingHighlight,
+                  let editor = textField.currentEditor() as? NSTextView,
+                  let font = textField.font else {
+                return
+            }
+
+            applySlashCommandHighlighting(to: editor, text: value, font: font)
+        }
+
+        func applySlashCommandHighlighting(to textView: NSTextView, text: String, font: NSFont) {
+            isApplyingHighlight = true
+            ComposerSlashCommandHighlighter.apply(to: textView, text: text, font: font)
+            isApplyingHighlight = false
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

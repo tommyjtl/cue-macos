@@ -56,6 +56,7 @@ Turn daily Cue usage into durable notes — a primary product direction.
 - [ ] **Daily digest** — At end of day (or on demand), summarize the user's local conversations: topics covered, things learned, open questions, and notable context (pages, screenshots, selections). Runs locally in Private mode when possible. <mark>May 25, 2026</mark>
 - [ ] **Digest review UI** — Surface the daily summary in the main app; let users edit, pin, or discard before saving. <mark>May 25, 2026</mark>
 - [ ] **Export to Obsidian** — Write digests (and optionally full threads) as Markdown with frontmatter into a user-chosen vault folder. Consider wikilinks for recurring topics. <mark>May 25, 2026</mark>
+- [x] **Inline /note export** — `/note` or `/notes` in the overlay composer writes a structured markdown note into a user-chosen Obsidian folder under `{folder}/{yyyy-MM-dd}/`. <mark>May 30, 2026</mark>
 - [ ] **Note templates** — Optional structure for digests (e.g. "Learned / Decisions / Follow-ups / References") so exports are useful in any PKM tool, not only Obsidian. <mark>May 25, 2026</mark>
 
 ---
