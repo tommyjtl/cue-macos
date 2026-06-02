@@ -38,6 +38,7 @@ final class ContextStackWindowController: NSWindowController {
     private var lastEscapeRollbackAt: CFTimeInterval?
     private var placementAnchor: NSPoint?
     private var chatPanelManuallyPositioned = false
+    private var isUserDraggingChatPanel = false
     private var panelDragObserver: NSObjectProtocol?
 
     init(
@@ -205,6 +206,7 @@ final class ContextStackWindowController: NSWindowController {
         cursorEnteredPanelAt = nil
         placementAnchor = nil
         chatPanelManuallyPositioned = false
+        isUserDraggingChatPanel = false
         viewModel.mode = .stack
         viewModel.draftMessage = "" 
         viewModel.messages = []
@@ -381,9 +383,18 @@ final class ContextStackWindowController: NSWindowController {
             forName: .overlayPanelUserDidDrag,
             object: panel,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.chatPanelManuallyPositioned = true
+        ) { [weak self] notification in
+            guard let self else { return }
+
+            let isDragging = notification.userInfo?[OverlayPanelDragNotification.isDraggingKey] as? Bool ?? false
+            if isDragging {
+                chatPanelManuallyPositioned = true
+                isUserDraggingChatPanel = true
+            } else {
+                isUserDraggingChatPanel = false
+                if viewModel.mode == .chat, chatPanelManuallyPositioned {
+                    scheduleDeferredRelayout()
+                }
             }
         }
     }
@@ -423,6 +434,10 @@ final class ContextStackWindowController: NSWindowController {
         let nextFrame = NSRect(origin: origin, size: size)
 
         guard !framesAreApproximatelyEqual(panel.frame, nextFrame) else {
+            return
+        }
+
+        if viewModel.mode == .chat, isUserDraggingChatPanel {
             return
         }
 

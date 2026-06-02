@@ -152,7 +152,11 @@ final class ConversationCoordinator {
             attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
-        let requestMessages = contextualMessages(for: selectedTextContexts, browserPages: browserPageContexts) + session.messages + [userMessage]
+        let requestMessages = ConversationContextMessages.build(
+            sessionMessages: session.messages,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        ) + session.messages + [userMessage]
         let streamingAssistantMessageID = UUID()
 
         session.messages.append(userMessage)
@@ -318,9 +322,10 @@ final class ConversationCoordinator {
         setError(nil)
         syncPanel()
 
-        let contextualMessages = contextualMessages(
-            for: selectedTextContexts,
-            browserPages: browserPageContexts
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: session.messages,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
         )
         let conversationMessages = session.messages
 
@@ -375,23 +380,6 @@ final class ConversationCoordinator {
 
     private func publishSession() {
         onSessionChange(session)
-    }
-
-    private func contextualMessages(for selectedTextContexts: [AttachedTextContext], browserPages: [BrowserPageContext]) -> [ConversationMessageDTO] {
-        var messages: [ConversationMessageDTO] = []
-
-        for page in browserPages.reversed() {
-            let contextMessage = "Web page context from \(page.browserName) (\(page.url)):\nTitle: \(page.pageTitle)\n\n\(page.extractedText)"
-            messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
-        }
-
-        for selectedTextContext in selectedTextContexts.reversed() {
-            let sourceDescription = selectedTextContext.appName ?? "the current app"
-            let contextMessage = "Selected text from \(sourceDescription):\n\n\(selectedTextContext.text)"
-            messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
-        }
-
-        return messages
     }
 
     private func attachedContextLabels(
@@ -710,5 +698,75 @@ final class ConversationCoordinator {
         }
 
         return String(flattened.prefix(60))
+    }
+}
+
+enum ConversationContextMessages {
+    nonisolated static func build(
+        sessionMessages: [ConversationMessageDTO],
+        selectedTextContexts: [AttachedTextContext] = [],
+        browserPageContexts: [BrowserPageContext] = []
+    ) -> [ConversationMessageDTO] {
+        var messages: [ConversationMessageDTO] = []
+        var seenBrowserURLs = Set<String>()
+        var seenSelectedTextKeys = Set<String>()
+
+        func appendBrowserPage(
+            url: String,
+            pageTitle: String,
+            browserName: String,
+            extractedText: String
+        ) {
+            guard seenBrowserURLs.insert(url).inserted else {
+                return
+            }
+
+            var contextMessage = "Web page context from \(browserName) (\(url)):\nTitle: \(pageTitle)"
+            if !extractedText.isEmpty {
+                contextMessage += "\n\n\(extractedText)"
+            }
+            messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
+        }
+
+        func appendSelectedText(text: String, appName: String?) {
+            let key = "\(appName ?? "")\u{0}\(text)"
+            guard seenSelectedTextKeys.insert(key).inserted else {
+                return
+            }
+
+            let sourceDescription = appName ?? "the current app"
+            let contextMessage = "Selected text from \(sourceDescription):\n\n\(text)"
+            messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
+        }
+
+        for message in sessionMessages where message.role == .user {
+            for page in message.attachedBrowserPages {
+                appendBrowserPage(
+                    url: page.url,
+                    pageTitle: page.pageTitle,
+                    browserName: page.browserName,
+                    extractedText: page.extractedText
+                )
+            }
+
+            for selectedText in message.attachedSelectedTexts {
+                appendSelectedText(text: selectedText.text, appName: selectedText.appName)
+            }
+        }
+
+        for page in browserPageContexts.reversed() {
+            appendBrowserPage(
+                url: page.url,
+                pageTitle: page.pageTitle,
+                browserName: page.browserName,
+                extractedText: page.extractedText
+            )
+        }
+
+        for selectedTextContext in selectedTextContexts.reversed() {
+            appendSelectedText(text: selectedTextContext.text, appName: selectedTextContext.appName)
+        }
+
+        return messages
     }
 }

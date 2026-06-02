@@ -17,6 +17,11 @@ struct BrowserPageContext: Identifiable, Hashable, Sendable {
     }
 
     var attachedReference: AttachedBrowserPageReference {
-        AttachedBrowserPageReference(url: url, pageTitle: pageTitle, browserName: browserName)
+        AttachedBrowserPageReference(
+            url: url,
+            pageTitle: pageTitle,
+            browserName: browserName,
+            extractedText: extractedText
+        )
     }
 }

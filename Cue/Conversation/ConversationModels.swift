@@ -201,6 +201,34 @@ struct AttachedBrowserPageReference: Codable, Equatable, Hashable {
     let url: String
     let pageTitle: String
     let browserName: String
+    var extractedText: String = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case url
+        case pageTitle
+        case browserName
+        case extractedText
+    }
+
+    init(
+        url: String,
+        pageTitle: String,
+        browserName: String,
+        extractedText: String = ""
+    ) {
+        self.url = url
+        self.pageTitle = pageTitle
+        self.browserName = browserName
+        self.extractedText = extractedText
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+        pageTitle = try container.decode(String.self, forKey: .pageTitle)
+        browserName = try container.decode(String.self, forKey: .browserName)
+        extractedText = try container.decodeIfPresent(String.self, forKey: .extractedText) ?? ""
+    }
 
     func serialized() throws -> String {
         let data = try JSONEncoder().encode(self)

@@ -109,6 +109,75 @@ struct CuePrototypeTests {
         #expect(userMessage.attachments.contains(.selectedText("Selected passage")))
     }
 
+    @Test func attachedBrowserPageReferenceDeserializesLegacyPayloadWithoutExtractedText() {
+        let legacyJSON = """
+        {"url":"https://example.com/thread","pageTitle":"Example Thread","browserName":"Safari"}
+        """
+
+        let page = AttachedBrowserPageReference.deserialized(from: legacyJSON)
+
+        #expect(page?.url == "https://example.com/thread")
+        #expect(page?.pageTitle == "Example Thread")
+        #expect(page?.browserName == "Safari")
+        #expect(page?.extractedText == "")
+    }
+
+    @Test func conversationContextMessagesRebuildFromSessionHistory() {
+        let browserPage = AttachedBrowserPageReference(
+            url: "https://mail.example.com/inbox",
+            pageTitle: "Inbox",
+            browserName: "Safari",
+            extractedText: "26 emails visible"
+        )
+        let sessionMessages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "How many emails are there?",
+                attachedBrowserPages: [browserPage],
+                attachedSelectedTexts: [AttachedSelectedTextReference(text: "hello", appName: "Mail")]
+            ),
+            ConversationMessageDTO(role: .assistant, text: "26 total emails.")
+        ]
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: sessionMessages,
+            selectedTextContexts: [],
+            browserPageContexts: []
+        )
+
+        #expect(contextualMessages.count == 2)
+        #expect(contextualMessages.allSatisfy { $0.role == .system })
+        #expect(contextualMessages[0].text.contains("26 emails visible"))
+        #expect(contextualMessages[1].text.contains("hello"))
+    }
+
+    @Test func conversationContextMessagesDedupesOverlayAndHistoricalContext() {
+        let browserPage = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(),
+            url: "https://example.com",
+            pageTitle: "Example",
+            extractedText: "Page body",
+            browserName: "Safari"
+        )
+        let sessionMessages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "First question",
+                attachedBrowserPages: [browserPage.attachedReference]
+            )
+        ]
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: sessionMessages,
+            selectedTextContexts: [],
+            browserPageContexts: [browserPage]
+        )
+
+        #expect(contextualMessages.count == 1)
+        #expect(contextualMessages[0].text.contains("Page body"))
+    }
+
 }
 
 private struct ExportedConversationDocument: Decodable {

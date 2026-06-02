@@ -1046,6 +1046,10 @@ extension Notification.Name {
     static let overlayPanelUserDidDrag = Notification.Name("cue.overlayPanelUserDidDrag")
 }
 
+enum OverlayPanelDragNotification {
+    static let isDraggingKey = "isDragging"
+}
+
 private struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragHandleView { DragHandleView() }
     func updateNSView(_ nsView: DragHandleView, context: Context) {}
@@ -1121,6 +1125,7 @@ private final class DragHandleView: NSView {
         dragOriginWindowFrame = window.frame
         window.invalidateCursorRects(for: self)
         NSCursor.closedHand.set()
+        postDragNotification(for: window, isDragging: true)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1150,7 +1155,15 @@ private final class DragHandleView: NSView {
         NSCursor.openHand.set()
 
         if let window {
-            NotificationCenter.default.post(name: .overlayPanelUserDidDrag, object: window)
+            postDragNotification(for: window, isDragging: false)
         }
+    }
+
+    private func postDragNotification(for window: NSWindow, isDragging: Bool) {
+        NotificationCenter.default.post(
+            name: .overlayPanelUserDidDrag,
+            object: window,
+            userInfo: [OverlayPanelDragNotification.isDraggingKey: isDragging]
+        )
     }
 }
