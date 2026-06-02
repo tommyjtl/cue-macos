@@ -1,114 +1,69 @@
-# Todo List
+# Backlog
 
-Organized by product area. Items are not prioritized — reorder as the roadmap firms up.
+Linear-style tickets: **title** = problem or outcome; body = scope. Two lanes only — **Bugs** (broken today) and **Features** (not yet built). Reorder within a lane as priorities firm up; no priority field.
 
 ---
 
 ## Bugs
 
-Things that are broken or unreliable today.
-
-- [ ] **Local mode context continuity** — In Ollama/local mode, does the latest message see all previous attachments and messages in the thread?
-- [ ] **Geometry action cycling** — Console spam: `Geometry action is cycling between duplicate values.` Likely tied to LLM response rendering in the chat UI; investigate SwiftUI layout feedback loops.
-- [ ] **OpenAI web access** — API-based chat is not reliably connected to the internet. No memory across turns for live lookups; cannot fetch URL content or search the web for up-to-date answers despite model selection. Web search toggles exist but behavior needs hardening.
+- [ ] **Local threads drop prior context in Ollama mode** — Verify whether the latest turn still sees all earlier messages and attachments in a local/private thread.
+- [ ] **Chat layout triggers geometry cycling warnings** — Console spam: `Geometry action is cycling between duplicate values.` Likely SwiftUI feedback during LLM response rendering; investigate layout loops in the overlay chat UI.
+- [ ] **Cloud mode cannot reliably use the web** — API chat is not dependably connected for live lookups: weak cross-turn memory for URLs/search, web toggles present but behavior inconsistent. Harden Responses API + web tools (overlaps feature work on cloud browsing).
 
 ---
 
-## Overlay & chat
+## Features
 
-The cursor-anchored context stack and chat composer.
+### Overlay & chat
 
-- [ ] **Pin chat on desktop** — Optional fixed position on a monitor; chat stays put instead of following the cursor or only being draggable ad hoc.
-- [ ] **Short answer → long answer** — Show a brief reply in the overlay first, then offer or expand to the full response. Current answers can be very long and slow to render.
-- [ ] **Brevity prompt** — Default or optional system prompt to keep responses concise.
-- [ ] **Copy button** — Copy assistant (and/or user) message content from the chat UI.
-- [ ] **Regenerate response** — Re-run the last turn without retyping the prompt.
-- [ ] **Remove context from chat UI** — Option to detach a context item from the composer/context area without clearing the whole stack.
-- [ ] **Resume conversation from desktop** — Better flow for continuing a saved thread when new context (screenshot, page, selection) needs to be added mid-conversation. See also **Attach while chat is open** under Shortcuts.
+- [ ] **Pin overlay chat to a fixed monitor position** — Optional desktop-anchored chat instead of cursor-follow or ad hoc drag only.
+- [ ] **Show short answers first, expand to full** — Brief reply in overlay first; offer expand for long generations. Pair with optional default brevity system prompt.
+- [ ] **Copy and regenerate chat messages** — Copy assistant/user content; re-run the last assistant turn without retyping.
+- [ ] **Remove one context item without clearing the stack** — Detach a single attachment from composer/context UI.
+- [ ] **Continue a saved thread with fresh capture** — Resume conversations from desktop/history while adding new screenshot, page, or selection mid-thread. Includes: hotkey to load most recent chat; capture shortcuts attach to composer when chat is open (no forced switch to context stack).
 
----
+### Context & capture
 
-## Context & capture
+- [ ] **Capture a specific application window** — Click-to-select one window; today click-without-drag is full display and drag is region-only.
+- [ ] **Structured web page context from the browser extension** — App: HTML → structured markdown for extension payloads. Extension: structured export aligned with app. Follow-on: strategy for images and other non-text page assets.
 
-How context enters Cue — screenshots, text, web pages, and future structured exports.
+### Bookmarks & notes
 
-- [ ] **Application window capture** — Capture a specific app window (e.g. click-to-select). Today: click without dragging captures the full display; drag selects a region. Per-window capture is not supported yet.
-- [ ] **Web page as structured context** — HTML → structured markdown for browser extension payloads.
-- [ ] **Structured page export** — Browser extension side of structured context (see above).
-- [ ] **Non-text web content** — Strategy for images and other non-serializable page assets in context.
-- [ ] **Bookmarking** — Save/bookmark sessions or context bundles (motivated by real multi-session workflows).
+- [x] **Export chat context to Obsidian with `/note`** — `/note` or `/notes` in composer writes structured markdown to a user-chosen folder under `{folder}/{yyyy-MM-dd}/`. <mark>May 30, 2026</mark>
+- [ ] **Quick-save web pages with `//` in the composer** — When web-page context is present (e.g. extension push via `BrowserWebServer`), typing `//` bookmarks URL + page content—no `/bookmark` command. User-configured export folder (mirror `/note` Settings validation; TBD shared vs dedicated path). Broader: save/bookmark full sessions or context bundles for multi-day workflows. <mark>Jun 2, 2026</mark>
+- [ ] **Daily digest with review and Obsidian export** — End-of-day (or on-demand) local summary of conversations, topics, and notable context; in-app review (edit/pin/discard); export markdown with frontmatter to a vault folder; optional templates (Learned / Decisions / Follow-ups / References). <mark>May 25, 2026</mark>
 
----
+### AI & search
 
-## AI & providers
+- [ ] **Lightweight Google Search in context** — Sometimes faster than asking the model; explore direct search alongside attached context.
 
-Model selection, web tools, and provider behavior.
+### Shortcuts & actions
 
-- [ ] **Google Search integration** — Sometimes a direct web search is faster than asking the LLM; explore lightweight search-in-context.
-- [ ] **OpenAI web search / browsing** — Full support for current information via Responses API + web tools (see OpenAI web access bug above).
+- [ ] **Canned prompt hotkeys** — e.g. `⌃1` grammar fix, `⌃2` screenshot→code, `⌃3` translate selection (EN→中文) using attached text/context.
+- [ ] **Installable shortcut apps (widget library)** — User-defined or downloadable mini-apps exposing toggleable quick actions beyond built-ins. <mark>May 25, 2026</mark>
 
----
+### Read aloud
 
-## Notes & memory
+- [ ] **On-device read-aloud for selected text** — Shortcut reads selection without opening chat; Supertonic ([repo](https://github.com/supertone-inc/supertonic)) evaluation (Swift/ONNX vs `supertonic serve` sidecar), model download, GPU, cold start; Settings for voice, language, speed; exploratory language-learning mode (slow-read, repeat phrase). <mark>May 25, 2026</mark>
 
-Turn daily Cue usage into durable notes — a primary product direction.
+### Onboarding
 
-- [ ] **Daily digest** — At end of day (or on demand), summarize the user's local conversations: topics covered, things learned, open questions, and notable context (pages, screenshots, selections). Runs locally in Private mode when possible. <mark>May 25, 2026</mark>
-- [ ] **Digest review UI** — Surface the daily summary in the main app; let users edit, pin, or discard before saving. <mark>May 25, 2026</mark>
-- [ ] **Export to Obsidian** — Write digests (and optionally full threads) as Markdown with frontmatter into a user-chosen vault folder. Consider wikilinks for recurring topics. <mark>May 25, 2026</mark>
-- [x] **Inline /note export** — `/note` or `/notes` in the overlay composer writes a structured markdown note into a user-chosen Obsidian folder under `{folder}/{yyyy-MM-dd}/`. <mark>May 30, 2026</mark>
-- [ ] **Note templates** — Optional structure for digests (e.g. "Learned / Decisions / Follow-ups / References") so exports are useful in any PKM tool, not only Obsidian. <mark>May 25, 2026</mark>
+- [ ] **First-run onboarding for permissions and product usage** — Clear Screen Recording + Accessibility path with retry and System Settings deep links; in-app usage walkthrough (capture, chat, shortcuts)—today only README/website and permission-only `OnboardingView`.
 
----
+### Exploratory
 
-## Read aloud & language learning
+- [ ] **Privacy-preserving usage research** — Whether and how to measure behavior; aggregate patterns (context types, session length) without compromising privacy.
 
-On-device text-to-speech for selected text — user-requested 点读机-style flow. Candidate engine: [Supertonic](https://github.com/supertone-inc/supertonic) (ON-device, multilingual, Swift/ONNX/`supertonic serve`).
+### Shipped
 
-- [ ] **Read selection shortcut** — After selecting text anywhere, a dedicated shortcut reads it aloud without opening chat. Preconfigure language, speed, and voice in Settings. <mark>May 25, 2026</mark>
-- [ ] **Supertonic integration** — Evaluate native Swift/ONNX vs local HTTP sidecar (`supertonic serve`); handle model download, GPU acceleration, and cold-start latency. <mark>May 25, 2026</mark>
-- [ ] **TTS settings** — Voice style, language (`lang` or `na`), speed, and quality steps; persist per user. <mark>May 25, 2026</mark>
-- [ ] **Language-learning mode (exploratory)** — Slow-read, repeat phrase, or read attached context in a target language. Builds on selection capture + on-device TTS without sending text to the cloud. <mark>May 25, 2026</mark>
+- [x] **Rename Private vs Cloud mode in UI** — "Private mode" (local/Ollama) vs "Cloud mode" (OpenAI), not provider names in copy.
+- [x] **Move Chromium extension to dedicated repo** — [cue-chromium-extension](https://github.com/tommyjtl/cue-chromium-extension); port `52473` / `127.0.0.1` kept in sync with `BrowserWebServer.swift`.
 
 ---
 
-## Shortcuts
+## How to add tickets
 
-Global hotkeys and power-user flows.
-
-- [ ] **Attach while chat is open** — When the overlay is in chat mode, action shortcuts (screenshot capture, selection, browser page, clipboard) add attachments directly to the chat composer; do not switch to the context stack panel.
-- [ ] **Prompt shortcuts** — Send canned prompts without typing, e.g.:
-  - `⌃1` — Fix grammar (selected text or context)
-  - `⌃2` — Transcribe screenshot into code
-  - `⌃3` — Translate selection (e.g. English → 中文) using attached text or context
-- [ ] **Shortcut apps (widgets)** — Let users install or define mini-apps inside Cue; each app exposes one or more quick shortcuts (grammar, transcribe, translate, etc.) that can be toggled on/off. Foundation for a small library of downloadable actions beyond built-in prompts. <mark>May 25, 2026</mark>
-- [ ] **Quick load recent chat** — Keyboard shortcut to restore the most recent conversation into the overlay.
-
----
-
-## Onboarding
-
-First-run experience — permissions and product usage.
-
-- [ ] **Usage onboarding** — Interactive in-app walkthrough (animated or step-by-step) that teaches how to capture context, open chat, and use shortcuts. Today usage guidance lives on the website / README only; `OnboardingView` handles permissions but not product usage.
-- [ ] **Permission onboarding** — Clearer first-run path for Screen Recording and Accessibility, with retry and deep links to System Settings.
-
----
-
-## Research & analytics (exploratory)
-
-- [ ] **Behavior tracking** — How (if at all) should usage be measured in a research prototype?
-- [ ] **Distribution / clustering** — Can aggregate patterns (e.g. context types, session length) inform product decisions without compromising privacy?
-
----
-
-## Done
-
-- [x] **Rename modes** — "Private mode" (local/Ollama) vs "Cloud mode" (OpenAI) instead of provider names in UI copy.
-- [x] **Migrate extension repo** — Extension lives at [cue-chromium-extension](https://github.com/tommyjtl/cue-chromium-extension); port `52473` and `127.0.0.1` stay in sync with `BrowserWebServer.swift`.
-
----
-
-## Notes
-
-_Add new items under the most relevant section. Move shipped work to **Done**. When adding a new item, append the idea date at the end of the line as `<mark>Mon DD, YYYY</mark>` (yellow highlight). Only tag items added on or after the date they were introduced — leave older backlog items untagged._
+1. Pick **Bugs** or **Features** (and a `###` group if one fits).
+2. One outcome per line: `**Title as the problem/outcome**` — scope, acceptance hints, links.
+3. Merge duplicates instead of scattering the same work across groups.
+4. New ideas: append `<mark>Mon DD, YYYY</mark>` at end of line. Move finished work to **Shipped** with `[x]`.
