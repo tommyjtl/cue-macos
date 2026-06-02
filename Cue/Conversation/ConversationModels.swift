@@ -201,6 +201,19 @@ struct AttachedBrowserPageReference: Codable, Equatable, Hashable {
     let url: String
     let pageTitle: String
     let browserName: String
+    var extractedText: String = ""
+
+    init(
+        url: String,
+        pageTitle: String,
+        browserName: String,
+        extractedText: String = ""
+    ) {
+        self.url = url
+        self.pageTitle = pageTitle
+        self.browserName = browserName
+        self.extractedText = extractedText
+    }
 
     func serialized() throws -> String {
         let data = try JSONEncoder().encode(self)
