@@ -109,6 +109,19 @@ struct CuePrototypeTests {
         #expect(userMessage.attachments.contains(.selectedText("Selected passage")))
     }
 
+    @Test func attachedBrowserPageReferenceDeserializesLegacyPayloadWithoutExtractedText() {
+        let legacyJSON = """
+        {"url":"https://example.com/thread","pageTitle":"Example Thread","browserName":"Safari"}
+        """
+
+        let page = AttachedBrowserPageReference.deserialized(from: legacyJSON)
+
+        #expect(page?.url == "https://example.com/thread")
+        #expect(page?.pageTitle == "Example Thread")
+        #expect(page?.browserName == "Safari")
+        #expect(page?.extractedText == "")
+    }
+
     @Test func conversationContextMessagesRebuildFromSessionHistory() {
         let browserPage = AttachedBrowserPageReference(
             url: "https://mail.example.com/inbox",
