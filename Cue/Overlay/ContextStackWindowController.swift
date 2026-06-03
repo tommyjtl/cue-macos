@@ -117,7 +117,7 @@ final class ContextStackWindowController: NSWindowController {
 
     var isComposerInputFocused: Bool {
         guard viewModel.mode == .chat, panel.isKeyWindow else { return false }
-        return composerTextField() != nil
+        return composerInputView() != nil
     }
 
     func show(screenshots: [CapturedScreenshot], selectedTextContexts: [AttachedTextContext], browserPageContexts: [BrowserPageContext], near point: NSPoint) {
@@ -595,6 +595,7 @@ final class ContextStackWindowController: NSWindowController {
         }
 
         viewModel.draftMessage = ""
+        viewModel.composerVisibleLineCount = 1
 
         let hasContext = !viewModel.screenshots.isEmpty
             || !viewModel.selectedTextContexts.isEmpty
@@ -618,43 +619,35 @@ final class ContextStackWindowController: NSWindowController {
         }
 
         viewModel.draftMessage = ""
+        viewModel.composerVisibleLineCount = 1
         onSendDraft(draft)
     }
 
     private func resignComposerInputFocus() {
-        if let textField = composerTextField() ?? findComposerTextField(in: hostingView),
-           textField.currentEditor() != nil {
-            textField.abortEditing()
+        if composerInputView() != nil || findComposerInputView(in: hostingView) != nil {
+            panel.makeFirstResponder(nil)
         }
-
-        panel.makeFirstResponder(nil)
     }
 
-    private func findComposerTextField(in view: NSView?) -> NSTextField? {
+    private func findComposerInputView(in view: NSView?) -> ComposerInputTextView? {
         guard let view else { return nil }
 
-        if let textField = view as? NSTextField, textField.isEditable {
-            return textField
+        if let textView = view as? ComposerInputTextView {
+            return textView
         }
 
         for subview in view.subviews {
-            if let textField = findComposerTextField(in: subview) {
-                return textField
+            if let textView = findComposerInputView(in: subview) {
+                return textView
             }
         }
 
         return nil
     }
 
-    private func composerTextField() -> NSTextField? {
-        if let textField = panel.firstResponder as? NSTextField {
-            return textField
-        }
-
-        if let textView = panel.firstResponder as? NSTextView,
-           textView.isFieldEditor,
-           let textField = textView.delegate as? NSTextField {
-            return textField
+    private func composerInputView() -> ComposerInputTextView? {
+        if let textView = panel.firstResponder as? ComposerInputTextView {
+            return textView
         }
 
         return nil
