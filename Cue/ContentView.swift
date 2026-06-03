@@ -204,6 +204,12 @@ private struct RecentsConversationRow: View {
     }
 }
 
+private func debugConsoleText(from entries: [AppModel.DebugLogEntry]) -> String {
+    entries.reversed().map { entry in
+        "[DebugLog][\(entry.source.rawValue)] \(entry.message)"
+    }.joined(separator: "\n")
+}
+
 private struct DebugWorkspaceView: View {
     @Environment(AppModel.self) private var appState
 
@@ -231,43 +237,23 @@ private struct DebugWorkspaceView: View {
                         .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
                         .padding(.top, SettingsLayout.rowVerticalPadding)
 
-                        if appState.debugLogEntries.isEmpty {
-                            Text("No log entries in this session yet.")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-                                .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
-                                .padding(.bottom, SettingsLayout.rowVerticalPadding)
-                        } else {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(appState.debugLogEntries) { entry in
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            Text(entry.source.rawValue)
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(SettingsLayout.insetBackground, in: Capsule())
-
-                                            Spacer()
-
-                                            Text(entry.timestamp.formatted(date: .abbreviated, time: .standard))
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(.secondary)
-                                        }
-
-                                        Text(entry.message)
-                                            .font(.system(size: 13))
-                                            .textSelection(.enabled)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(14)
-                                    .background(SettingsLayout.insetBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                }
+                        Group {
+                            if appState.debugLogEntries.isEmpty {
+                                Text("No log entries in this session yet.")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(debugConsoleText(from: appState.debugLogEntries))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .textSelection(.enabled)
                             }
-                            .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
-                            .padding(.bottom, SettingsLayout.rowVerticalPadding)
                         }
+                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+                        .padding(SettingsLayout.rowHorizontalPadding)
+                        .padding(.bottom, SettingsLayout.rowVerticalPadding)
+                        .background(SettingsLayout.insetBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                        .padding(.bottom, SettingsLayout.rowVerticalPadding)
                     }
                 }
             }
