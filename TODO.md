@@ -46,6 +46,10 @@ Linear-style tickets: **title** = problem or outcome; body = scope. Two lanes on
 
 - [ ] **On-device read-aloud for selected text** — Shortcut reads selection without opening chat; Supertonic ([repo](https://github.com/supertone-inc/supertonic)) evaluation (Swift/ONNX vs `supertonic serve` sidecar), model download, GPU, cold start; Settings for voice, language, speed; exploratory language-learning mode (slow-read, repeat phrase). <mark>May 25, 2026</mark>
 
+### Data & backup
+
+- [ ] **Settings → Data: export and import conversation history** — New **Data** sidebar item under App Settings (between General and Debug). **On disk today:** `~/Library/Application Support/Cue/` — `cue.sqlite` (threads/messages), `conversation-attachments/` (message images), `screenshots/` (optional in backup). Xcode rebuilds do not delete this folder; data is lost if the folder is removed, bundle ID changes, or `ConversationStore` fails to open. **v1:** Export All → `.cuebackup` zip (manifest version + sqlite + attachments); Reveal in Finder; footnote with path. **v2:** Import (merge vs replace TBD). Out of scope for v1 unless explicit: UserDefaults (shortcuts, API keys, Obsidian path). Recents already has per-conversation JSON export (`ConversationExport`)—Data is full-library backup/restore. <mark>Jun 2, 2026</mark>
+
 ### Onboarding
 
 - [ ] **First-run onboarding for permissions and product usage** — Clear Screen Recording + Accessibility path with retry and System Settings deep links; in-app usage walkthrough (capture, chat, shortcuts)—today only README/website and permission-only `OnboardingView`.

@@ -21,6 +21,8 @@ final class ContextPanelViewModel {
     var canCancelSend = false
     var providerDisplayName = ""
     var composerFocusRequestID = UUID()
+    /// 1 = compact composer; 2 = expanded (two visible lines).
+    var composerVisibleLineCount = 1
     var hasSavedConversations = false
     var supportsWebSearch = false
     var isWebSearchEnabled = false
@@ -42,6 +44,12 @@ struct ContextStackView: View {
         static let controlFontSize: CGFloat = 13
         static let cornerRadius: CGFloat = 14
         static let headerHeight: CGFloat = 44
+        static func composerEditorHeight(
+            fontSize: CGFloat = controlFontSize,
+            visibleLineCount: Int = 1
+        ) -> CGFloat {
+            ComposerInputMetrics.editorHeight(fontSize: fontSize, visibleLineCount: visibleLineCount)
+        }
     }
 
     @Bindable var model: ContextPanelViewModel
@@ -140,24 +148,34 @@ struct ContextStackView: View {
                 ComposerContextShelf(items: contextPreviewItems, onRemove: onRemoveContextItem)
             }
 
-            ComposerTextField(
-                text: $model.draftMessage,
-                placeholder: composerPlaceholder,
-                fontSize: ComposerLayout.controlFontSize,
-                focusRequestID: model.composerFocusRequestID,
-                onSubmit: {
-                    guard !model.isSending,
-                          !model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return
-                    }
+            ZStack(alignment: .topLeading) {
+                ComposerTextField(
+                    text: $model.draftMessage,
+                    visibleLineCount: $model.composerVisibleLineCount,
+                    fontSize: ComposerLayout.controlFontSize,
+                    focusRequestID: model.composerFocusRequestID,
+                    onSubmit: {
+                        guard !model.isSending,
+                              !model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            return
+                        }
 
-                    onSend()
-                },
-                onEscape: onEscape
-            )
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(height: 38)
+                        onSend()
+                    },
+                    onEscape: onEscape
+                )
+
+                if model.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(composerPlaceholder)
+                        .font(ComposerLayout.controlFont)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, ComposerInputMetrics.placeholderHorizontalPadding)
+                        .padding(.vertical, ComposerInputMetrics.textContainerVerticalInset)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: ComposerLayout.composerEditorHeight(visibleLineCount: model.composerVisibleLineCount))
+            .animation(.easeInOut(duration: 0.15), value: model.composerVisibleLineCount)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: ComposerLayout.cornerRadius, style: .continuous)
@@ -556,14 +574,17 @@ private struct ComposerContextShelf: View {
     let onRemove: (ContextPreviewItem) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: true) {
             HStack(spacing: 8) {
                 ForEach(items) { item in
                     ComposerContextTile(item: item, onRemove: onRemove)
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 2)
         }
+        .scrollIndicators(.visible, axes: .horizontal)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -883,144 +904,354 @@ private struct ContextStackPreviewCard: View {
 
 // MARK: - Composer input
 
+private enum ComposerInputMetrics {
+    static let compactVisibleLineCount = 1
+    static let expandedVisibleLineCount = 2
+    /// Inset applied on each vertical edge of the text view (top and bottom).
+    static let textContainerVerticalInset: CGFloat = 8
+    static let textContainerHorizontalInset: CGFloat = 6
+    /// Extra chrome beyond line metrics + insets so text/placeholder sit visually centered.
+    static let extraVerticalChrome: CGFloat = 0 // was 4
+    static var textContainerInset: NSSize {
+        NSSize(width: textContainerHorizontalInset, height: textContainerVerticalInset)
+    }
+
+    static var placeholderHorizontalPadding: CGFloat {
+        textContainerHorizontalInset + 8
+    }
+
+    static var totalVerticalTextInset: CGFloat {
+        textContainerVerticalInset * 2
+    }
+
+    static func lineHeight(fontSize: CGFloat) -> CGFloat {
+        NSLayoutManager().defaultLineHeight(for: NSFont.systemFont(ofSize: fontSize))
+    }
+
+    /// Visible text viewport inside the composer chrome (lines × line height + insets).
+    static func textViewportHeight(fontSize: CGFloat, visibleLineCount: Int) -> CGFloat {
+        let clampedLines = clampedVisibleLineCount(visibleLineCount)
+        return lineHeight(fontSize: fontSize) * CGFloat(clampedLines)
+            + totalVerticalTextInset
+            + extraVerticalChrome
+    }
+
+    /// Total SwiftUI frame height for the composer `ZStack` in chat mode.
+    static func editorHeight(fontSize: CGFloat, visibleLineCount: Int) -> CGFloat {
+        textViewportHeight(fontSize: fontSize, visibleLineCount: visibleLineCount)
+    }
+
+    static func clampedVisibleLineCount(_ count: Int) -> Int {
+        min(max(count, compactVisibleLineCount), expandedVisibleLineCount)
+    }
+
+    /// 1 = single-line chrome; 2 = two-line chrome (wraps or explicit newline).
+    static func displayedLineTier(for textView: NSTextView, fontSize: CGFloat) -> Int {
+        let trimmed = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return compactVisibleLineCount
+        }
+
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return compactVisibleLineCount
+        }
+
+        let width = max(textView.bounds.width, 1)
+        textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: textContainer)
+
+        let usedHeight = layoutManager.usedRect(for: textContainer).height
+        let singleLineHeight = lineHeight(fontSize: fontSize)
+        if usedHeight > singleLineHeight * 1.05 {
+            return expandedVisibleLineCount
+        }
+
+        return compactVisibleLineCount
+    }
+}
+
 private struct ComposerTextField: NSViewRepresentable {
     @Binding var text: String
-    let placeholder: String
+    @Binding var visibleLineCount: Int
     let fontSize: CGFloat
     let focusRequestID: UUID
     let onSubmit: () -> Void
     let onEscape: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, fontSize: fontSize, onSubmit: onSubmit, onEscape: onEscape)
+        Coordinator(
+            text: $text,
+            visibleLineCount: $visibleLineCount,
+            fontSize: fontSize,
+            onSubmit: onSubmit,
+            onEscape: onEscape
+        )
     }
 
-    func makeNSView(context: Context) -> NSTextField {
-        let textField = FirstMouseTextField()
-        textField.isBordered = false
-        textField.isBezeled = false
-        textField.drawsBackground = false
-        textField.focusRingType = .none
-        textField.font = NSFont.systemFont(ofSize: fontSize)
-        textField.placeholderString = placeholder
-        textField.isEditable = true
-        textField.isSelectable = true
-        textField.delegate = context.coordinator
-        textField.cell?.wraps = false
-        textField.cell?.isScrollable = true
-        textField.cell?.truncatesLastVisibleLine = false
-        textField.stringValue = text
-        return textField
+    func makeNSView(context: Context) -> ComposerInputScrollView {
+        let scrollView = ComposerInputScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
+        scrollView.viewportHeight = ComposerInputMetrics.textViewportHeight(
+            fontSize: fontSize,
+            visibleLineCount: visibleLineCount
+        )
+
+        let textView = ComposerInputTextView()
+        textView.onSubmit = { context.coordinator.onSubmit() }
+        textView.onEscape = { context.coordinator.onEscape() }
+        textView.delegate = context.coordinator
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.drawsBackground = false
+        textView.font = NSFont.systemFont(ofSize: fontSize)
+        textView.textColor = .labelColor
+        textView.insertionPointColor = .labelColor
+        textView.textContainerInset = ComposerInputMetrics.textContainerInset
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.string = text
+
+        if let textContainer = textView.textContainer {
+            textContainer.widthTracksTextView = true
+            textContainer.lineBreakMode = .byWordWrapping
+            textContainer.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        }
+
+        scrollView.documentView = textView
+        scrollView.onAfterLayout = { [coordinator = context.coordinator] textView in
+            coordinator.updateVisibleLineCount(for: textView)
+        }
+        context.coordinator.textView = textView
+        context.coordinator.scrollView = scrollView
+        scrollView.refreshTextViewLayout()
+
+        return scrollView
     }
 
-    func updateNSView(_ textField: NSTextField, context: Context) {
+    func updateNSView(_ scrollView: ComposerInputScrollView, context: Context) {
         context.coordinator.onSubmit = onSubmit
         context.coordinator.onEscape = onEscape
 
+        let viewportHeight = ComposerInputMetrics.textViewportHeight(
+            fontSize: fontSize,
+            visibleLineCount: visibleLineCount
+        )
+        scrollView.onAfterLayout = { [coordinator = context.coordinator] textView in
+            coordinator.updateVisibleLineCount(for: textView)
+        }
+        if scrollView.viewportHeight != viewportHeight {
+            scrollView.viewportHeight = viewportHeight
+        }
+
+        guard let textView = context.coordinator.textView else {
+            return
+        }
+
+        textView.onSubmit = { context.coordinator.onSubmit() }
+        textView.onEscape = { context.coordinator.onEscape() }
+
         let font = NSFont.systemFont(ofSize: fontSize)
-        if textField.font != font {
-            textField.font = font
+        if textView.font != font {
+            textView.font = font
         }
 
-        if textField.placeholderString != placeholder {
-            textField.placeholderString = placeholder
-        }
-
-        if textField.stringValue != text {
+        if textView.string != text {
             if text.isEmpty {
-                applyText(text, to: textField)
-            } else if context.coordinator.shouldApplyExternalTextUpdate(for: textField) {
-                textField.stringValue = text
+                context.coordinator.applyText(text, to: textView)
+            } else if context.coordinator.shouldApplyExternalTextUpdate(for: textView) {
+                context.coordinator.applyText(text, to: textView)
             }
+        } else if !context.coordinator.isApplyingHighlight,
+                  let font = textView.font {
+            context.coordinator.applySlashCommandHighlighting(to: textView, text: textView.string, font: font)
         }
 
-        if let editor = textField.currentEditor() as? NSTextView,
-           let font = textField.font {
-            context.coordinator.applySlashCommandHighlighting(to: editor, text: textField.stringValue, font: font)
-        }
+        scrollView.refreshTextViewLayout()
 
         if context.coordinator.lastFocusRequestID != focusRequestID {
             context.coordinator.lastFocusRequestID = focusRequestID
-            textField.window?.makeKey()
-            textField.window?.makeFirstResponder(textField)
+            textView.window?.makeKey()
+            textView.window?.makeFirstResponder(textView)
         }
     }
 
-    private func applyText(_ text: String, to textField: NSTextField) {
-        if let editor = textField.currentEditor() as? NSTextView {
-            editor.string = text
-        }
-        textField.stringValue = text
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding var text: String
+        @Binding var visibleLineCount: Int
         let fontSize: CGFloat
         var onSubmit: () -> Void
         var onEscape: () -> Void
         var lastFocusRequestID: UUID?
-        private var isApplyingHighlight = false
+        weak var textView: ComposerInputTextView?
+        weak var scrollView: ComposerInputScrollView?
+        var isApplyingHighlight = false
 
         init(
             text: Binding<String>,
+            visibleLineCount: Binding<Int>,
             fontSize: CGFloat,
             onSubmit: @escaping () -> Void,
             onEscape: @escaping () -> Void
         ) {
             _text = text
+            _visibleLineCount = visibleLineCount
             self.fontSize = fontSize
             self.onSubmit = onSubmit
             self.onEscape = onEscape
         }
 
-        func shouldApplyExternalTextUpdate(for textField: NSTextField) -> Bool {
-            guard let editor = textField.currentEditor() else {
-                return true
+        func shouldApplyExternalTextUpdate(for textView: NSTextView) -> Bool {
+            if textView.hasMarkedText() {
+                return false
             }
 
-            return textField.window?.firstResponder !== editor
+            return textView.window?.firstResponder !== textView
         }
 
-        func controlTextDidChange(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField else {
+        func applyText(_ value: String, to textView: NSTextView) {
+            guard textView.string != value else {
                 return
             }
 
-            let value = textField.stringValue
-            text = value
+            if value.isEmpty {
+                textView.string = ""
+                textView.undoManager?.removeAllActions()
+                textView.scrollToBeginningOfDocument(nil)
+                updateVisibleLineCount(for: textView)
+            } else if let font = textView.font {
+                applySlashCommandHighlighting(to: textView, text: value, font: font)
+            } else {
+                textView.string = value
+            }
 
-            guard !isApplyingHighlight,
-                  let editor = textField.currentEditor() as? NSTextView,
-                  let font = textField.font else {
+            scrollView?.refreshTextViewLayout()
+        }
+
+        func updateVisibleLineCount(for textView: NSTextView) {
+            let tier = ComposerInputMetrics.displayedLineTier(for: textView, fontSize: fontSize)
+            let clamped = ComposerInputMetrics.clampedVisibleLineCount(tier)
+            guard visibleLineCount != clamped else {
                 return
             }
 
-            applySlashCommandHighlighting(to: editor, text: value, font: font)
+            visibleLineCount = clamped
+
+            let viewportHeight = ComposerInputMetrics.textViewportHeight(
+                fontSize: fontSize,
+                visibleLineCount: clamped
+            )
+            if scrollView?.viewportHeight != viewportHeight {
+                scrollView?.viewportHeight = viewportHeight
+            }
         }
 
         func applySlashCommandHighlighting(to textView: NSTextView, text: String, font: NSFont) {
             isApplyingHighlight = true
             ComposerSlashCommandHighlighter.apply(to: textView, text: text, font: font)
             isApplyingHighlight = false
+            scrollView?.refreshTextViewLayout()
         }
 
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                onSubmit()
-                return true
+        func textDidChange(_ notification: Notification) {
+            guard !isApplyingHighlight,
+                  let textView = notification.object as? NSTextView else {
+                return
             }
 
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                onEscape()
-                return true
+            let value = textView.string
+            text = value
+
+            guard let font = textView.font else {
+                scrollView?.refreshTextViewLayout()
+                return
             }
 
-            return false
+            applySlashCommandHighlighting(to: textView, text: value, font: font)
         }
     }
 }
 
-private final class FirstMouseTextField: NSTextField {
+final class ComposerInputScrollView: NSScrollView {
+    private var isRefreshingLayout = false
+    var onAfterLayout: ((NSTextView) -> Void)?
+
+    var viewportHeight: CGFloat = 40 {
+        didSet {
+            if oldValue != viewportHeight {
+                invalidateIntrinsicContentSize()
+                refreshTextViewLayout()
+            }
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: viewportHeight)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if let textView = documentView {
+            let contentHeight = textView.frame.height
+            let visibleHeight = contentView.bounds.height
+            if contentHeight <= visibleHeight + 1 {
+                nextResponder?.scrollWheel(with: event)
+                return
+            }
+        }
+
+        super.scrollWheel(with: event)
+    }
+
+    func refreshTextViewLayout() {
+        guard !isRefreshingLayout,
+              let textView = documentView as? NSTextView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return
+        }
+
+        isRefreshingLayout = true
+        defer { isRefreshingLayout = false }
+
+        let width = max(contentView.bounds.width, 1)
+        textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+
+        layoutManager.ensureLayout(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let verticalInset = textView.textContainerInset.height * 2
+        let contentHeight = max(usedRect.height + verticalInset, viewportHeight)
+
+        var frame = textView.frame
+        frame.origin = .zero
+        frame.size.width = width
+        frame.size.height = contentHeight
+        textView.frame = frame
+        reflectScrolledClipView(contentView)
+        onAfterLayout?(textView)
+    }
+
+    override func layout() {
+        super.layout()
+        refreshTextViewLayout()
+    }
+}
+
+final class ComposerInputTextView: NSTextView {
+    var onSubmit: (() -> Void)?
+    var onEscape: (() -> Void)?
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
@@ -1032,11 +1263,36 @@ private final class FirstMouseTextField: NSTextField {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if super.performKeyEquivalent(with: event) {
+        if ComposerEditShortcut.perform(with: event, sender: self) {
             return true
         }
 
-        return ComposerEditShortcut.perform(with: event, sender: self)
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if handleComposerKey(event) {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    private func handleComposerKey(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 36, 76: // Return and keypad Enter (insertNewline on NSTextField)
+            let shiftPressed = event.modifierFlags.contains(.shift)
+            if !shiftPressed {
+                onSubmit?()
+                return true
+            }
+            return false
+        case 53:
+            onEscape?()
+            return true
+        default:
+            return false
+        }
     }
 }
 
