@@ -13,8 +13,8 @@ enum ConversationExportError: LocalizedError {
     }
 }
 
-struct ExportedConversationAttachment: Encodable, Equatable {
-    enum Kind: String, Encodable {
+struct ExportedConversationAttachment: Encodable, Equatable, Sendable {
+    enum Kind: String, Encodable, Sendable {
         case image
         case webPage
         case selectedText
@@ -25,27 +25,27 @@ struct ExportedConversationAttachment: Encodable, Equatable {
     let url: String?
     let text: String?
 
-    static func image(path: String) -> Self {
+    nonisolated static func image(path: String) -> Self {
         Self(kind: .image, path: path, url: nil, text: nil)
     }
 
-    static func webPage(url: String) -> Self {
+    nonisolated static func webPage(url: String) -> Self {
         Self(kind: .webPage, path: nil, url: url, text: nil)
     }
 
-    static func selectedText(_ text: String) -> Self {
+    nonisolated static func selectedText(_ text: String) -> Self {
         Self(kind: .selectedText, path: nil, url: nil, text: text)
     }
 }
 
-struct ExportedConversationMessage: Encodable, Equatable {
+struct ExportedConversationMessage: Encodable, Equatable, Sendable {
     let id: UUID
     let role: String
     let text: String
     let attachments: [ExportedConversationAttachment]
 }
 
-struct ExportedConversationDocument: Encodable, Equatable {
+struct ExportedConversationDocument: Encodable, Equatable, Sendable {
     let id: UUID
     let title: String
     let createdAt: Date
@@ -54,7 +54,7 @@ struct ExportedConversationDocument: Encodable, Equatable {
 }
 
 enum ConversationExport {
-    static func makeDocument(from conversation: PersistedConversation) -> ExportedConversationDocument {
+    nonisolated static func makeDocument(from conversation: PersistedConversation) -> ExportedConversationDocument {
         ExportedConversationDocument(
             id: conversation.id,
             title: conversation.title,
@@ -64,7 +64,7 @@ enum ConversationExport {
         )
     }
 
-    static func encode(_ conversation: PersistedConversation) throws -> Data {
+    nonisolated static func encode(_ conversation: PersistedConversation) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -76,7 +76,7 @@ enum ConversationExport {
         return data
     }
 
-    static func attachments(for message: ConversationMessageDTO) -> [ExportedConversationAttachment] {
+    nonisolated static func attachments(for message: ConversationMessageDTO) -> [ExportedConversationAttachment] {
         var attachments: [ExportedConversationAttachment] = []
 
         for image in message.imageAttachments {
@@ -94,7 +94,7 @@ enum ConversationExport {
         return attachments
     }
 
-    private static func exportedMessage(from message: ConversationMessageDTO) -> ExportedConversationMessage {
+    nonisolated private static func exportedMessage(from message: ConversationMessageDTO) -> ExportedConversationMessage {
         ExportedConversationMessage(
             id: message.id,
             role: message.role.rawValue,
@@ -103,7 +103,7 @@ enum ConversationExport {
         )
     }
 
-    private static func absoluteImagePath(for reference: ConversationImageAttachmentReference) -> String {
+    nonisolated private static func absoluteImagePath(for reference: ConversationImageAttachmentReference) -> String {
         guard let rootDirectory = try? CueStoragePaths.conversationAttachmentsDirectory() else {
             return reference.relativePath
         }

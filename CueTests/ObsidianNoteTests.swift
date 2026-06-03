@@ -23,6 +23,33 @@ struct ObsidianNoteTests {
         #expect(NoteCommand.parse(from: "please /note later") == nil)
     }
 
+    @Test func noteCommandRequiresConversationOrContextBeforeExport() {
+        #expect(
+            NoteCommand.hasExportableContent(
+                sessionMessages: [],
+                screenshotCount: 0,
+                selectedTextContextCount: 0,
+                browserPageContextCount: 0
+            ) == false
+        )
+        #expect(
+            NoteCommand.hasExportableContent(
+                sessionMessages: [ConversationMessageDTO(role: .user, text: "Summarize this.")],
+                screenshotCount: 0,
+                selectedTextContextCount: 0,
+                browserPageContextCount: 0
+            )
+        )
+        #expect(
+            NoteCommand.hasExportableContent(
+                sessionMessages: [],
+                screenshotCount: 1,
+                selectedTextContextCount: 0,
+                browserPageContextCount: 0
+            )
+        )
+    }
+
     @Test func noteCommandHighlightsLeadingKeywordRange() {
         #expect(NoteCommand.leadingKeywordRange(in: "/note focus")?.lowerBound == "/note focus".startIndex)
         #expect(NoteCommand.leadingKeywordRange(in: "/notebook") == nil)

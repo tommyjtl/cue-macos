@@ -19,6 +19,7 @@ final class ContextPanelViewModel {
     var draftMessage = ""
     var isSending = false
     var canCancelSend = false
+    var conversationProvider: ConversationProvider = .ollama
     var providerDisplayName = ""
     var composerFocusRequestID = UUID()
     /// 1 = compact composer; 2 = expanded (two visible lines).
@@ -323,13 +324,13 @@ struct ContextStackView: View {
     }
 
     private var chatSubtitle: String {
-        let contextItemCount = model.screenshots.count + model.selectedTextContexts.count + model.browserPageContexts.count
-        let attachmentSummary = contextItemCount == 1 ? "1 context item attached" : "\(contextItemCount) context items attached"
-        if model.providerDisplayName.isEmpty {
-            return attachmentSummary
+        let modeTitle = model.conversationProvider.title
+        let modelName = model.providerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelName.isEmpty else {
+            return modeTitle
         }
 
-        return "\(attachmentSummary) • \(model.providerDisplayName)"
+        return "\(modeTitle) • \(modelName)"
     }
 
     private var composerPlaceholder: String {

@@ -27,7 +27,7 @@ final class ContextStackWindowController: NSWindowController {
     private let viewModel: ContextPanelViewModel
     private var dismissChatShortcut: DismissChatShortcut
     /// Read from the global keyDown monitor callback (nonisolated context).
-    private nonisolated(unsafe) var globalMonitorDismissShortcut: DismissChatShortcut = .defaultValue
+    private nonisolated(unsafe) var globalMonitorDismissShortcut: DismissChatShortcut
     /// Read from the global keyDown monitor callback (nonisolated context).
     private nonisolated(unsafe) var globalMonitorPanelIsVisible = false
     private var dismissShortcutPressTracker = RepeatedKeyPressTracker()
@@ -185,10 +185,20 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    func updateConversation(messages: [ConversationMessageDTO], isSending: Bool, canCancelSend: Bool, providerDisplayName: String, hasSavedConversations: Bool, supportsWebSearch: Bool, isWebSearchEnabled: Bool) {
+    func updateConversation(
+        messages: [ConversationMessageDTO],
+        isSending: Bool,
+        canCancelSend: Bool,
+        conversationProvider: ConversationProvider,
+        providerDisplayName: String,
+        hasSavedConversations: Bool,
+        supportsWebSearch: Bool,
+        isWebSearchEnabled: Bool
+    ) {
         viewModel.messages = messages
         viewModel.isSending = isSending
         viewModel.canCancelSend = canCancelSend
+        viewModel.conversationProvider = conversationProvider
         viewModel.providerDisplayName = providerDisplayName
         viewModel.hasSavedConversations = hasSavedConversations
         viewModel.supportsWebSearch = supportsWebSearch
@@ -212,6 +222,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.messages = []
         viewModel.isSending = false
         viewModel.canCancelSend = false
+        viewModel.conversationProvider = .ollama
         viewModel.providerDisplayName = ""
         viewModel.supportsWebSearch = false
         viewModel.isWebSearchEnabled = false
@@ -384,16 +395,18 @@ final class ContextStackWindowController: NSWindowController {
             object: panel,
             queue: .main
         ) { [weak self] notification in
-            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
 
-            let isDragging = notification.userInfo?[OverlayPanelDragNotification.isDraggingKey] as? Bool ?? false
-            if isDragging {
-                chatPanelManuallyPositioned = true
-                isUserDraggingChatPanel = true
-            } else {
-                isUserDraggingChatPanel = false
-                if viewModel.mode == .chat, chatPanelManuallyPositioned {
-                    scheduleDeferredRelayout()
+                let isDragging = notification.userInfo?[OverlayPanelDragNotification.isDraggingKey] as? Bool ?? false
+                if isDragging {
+                    self.chatPanelManuallyPositioned = true
+                    self.isUserDraggingChatPanel = true
+                } else {
+                    self.isUserDraggingChatPanel = false
+                    if self.viewModel.mode == .chat, self.chatPanelManuallyPositioned {
+                        self.scheduleDeferredRelayout()
+                    }
                 }
             }
         }

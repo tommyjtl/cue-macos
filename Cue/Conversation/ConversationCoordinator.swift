@@ -283,6 +283,17 @@ final class ConversationCoordinator {
             return
         }
 
+        guard NoteCommand.hasExportableContent(
+            sessionMessages: session.messages,
+            screenshotCount: screenshots.count,
+            selectedTextContextCount: selectedTextContexts.count,
+            browserPageContextCount: browserPageContexts.count
+        ) else {
+            setError("Send a message or attach context before using /note.")
+            setStatus("Nothing to save to Obsidian yet.")
+            return
+        }
+
         let contextLabels = attachedContextLabels(
             screenshots: screenshots,
             selectedTextContexts: selectedTextContexts,
