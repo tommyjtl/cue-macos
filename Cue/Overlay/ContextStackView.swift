@@ -1069,7 +1069,11 @@ private struct ComposerTextField: NSViewRepresentable {
         }
 
         if textView.string != text {
-            context.coordinator.applyText(text, to: textView)
+            if text.isEmpty {
+                context.coordinator.applyText(text, to: textView)
+            } else if context.coordinator.shouldApplyExternalTextUpdate(for: textView) {
+                context.coordinator.applyText(text, to: textView)
+            }
         } else if !context.coordinator.isApplyingHighlight,
                   let font = textView.font {
             context.coordinator.applySlashCommandHighlighting(to: textView, text: textView.string, font: font)
@@ -1107,6 +1111,14 @@ private struct ComposerTextField: NSViewRepresentable {
             self.fontSize = fontSize
             self.onSubmit = onSubmit
             self.onEscape = onEscape
+        }
+
+        func shouldApplyExternalTextUpdate(for textView: NSTextView) -> Bool {
+            if textView.hasMarkedText() {
+                return false
+            }
+
+            return textView.window?.firstResponder !== textView
         }
 
         func applyText(_ value: String, to textView: NSTextView) {
@@ -1268,7 +1280,7 @@ final class ComposerInputTextView: NSTextView {
 
     private func handleComposerKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
-        case 36:
+        case 36, 76: // Return and keypad Enter (insertNewline on NSTextField)
             let shiftPressed = event.modifierFlags.contains(.shift)
             if !shiftPressed {
                 onSubmit?()
