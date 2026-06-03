@@ -475,7 +475,13 @@ private struct MainWindowConversationBubble: View {
                 processBlockView(for: block)
             }
 
-            if message.role == .assistant, !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
+                Text("Saved to Obsidian.")
+                    .textSelection(.enabled)
+
+                OpenObsidianNoteButton(fileURL: savedNoteFileURL)
+                    .padding(.top, 4)
+            } else if message.role == .assistant, !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 StructuredText(markdown: message.text)
                     .textual.structuredTextStyle(.default)
                     .textual.textSelection(.enabled)

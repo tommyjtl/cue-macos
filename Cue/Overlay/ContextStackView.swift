@@ -398,7 +398,15 @@ private struct ConversationMessageBubble: View {
                 processBlockView(for: block)
             }
 
-            if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
+                Text("Saved to Obsidian.")
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                OpenObsidianNoteButton(fileURL: savedNoteFileURL)
+                    .padding(.top, 4)
+            } else if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 messageBody
                     .font(.body)
                     .textSelection(.enabled)

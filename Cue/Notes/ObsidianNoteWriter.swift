@@ -82,7 +82,7 @@ struct ObsidianNoteWriter {
             return "note.md"
         }
 
-        let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|")
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|`")
         let sanitizedScalars = trimmed.unicodeScalars.map { scalar -> Character in
             if invalidCharacters.contains(scalar) {
                 return "-"

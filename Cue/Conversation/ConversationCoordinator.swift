@@ -354,7 +354,7 @@ final class ConversationCoordinator {
                 session.messages.append(
                     ConversationMessageDTO(
                         role: .assistant,
-                        text: "Saved to Obsidian: `\(result.fileURL.path)`"
+                        text: ObsidianSavedNoteMessage.confirmationText(filePath: result.fileURL.path)
                     )
                 )
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)

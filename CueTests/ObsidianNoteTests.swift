@@ -126,6 +126,32 @@ struct ObsidianNoteTests {
         #expect(ObsidianNoteWriter.fileName(from: "Hello, World!") == "Hello, World!.md")
         #expect(ObsidianNoteWriter.fileName(from: "   ") == "note.md")
         #expect(ObsidianNoteWriter.fileName(from: "Bad/Name:Here") == "Bad-Name-Here.md")
+        #expect(ObsidianNoteWriter.fileName(from: "My `code` note") == "My -code- note.md")
+    }
+
+    @Test func savedNoteMessageParsesFilePath() {
+        let path = "/Users/example/Obsidian/Vault/2026-06-03/Note title.md"
+        let message = ObsidianSavedNoteMessage.confirmationText(filePath: path)
+
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: message)?.path == path)
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: "Saved to Obsidian.") == nil)
+    }
+
+    @Test func savedNoteMessageParsesPathWithBackticksInLegacyFormat() {
+        let path = "/Users/example/Vault/My `code` note.md"
+        let legacyMessage = "Saved to Obsidian: `\(path)`"
+
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: legacyMessage)?.path == path)
+    }
+
+    @Test func openURLUsesObsidianURIWithNewTab() {
+        let fileURL = URL(fileURLWithPath: "/Users/example/Vault/note.md")
+        let openURL = ObsidianNoteOpener.openURL(for: fileURL)
+
+        #expect(openURL?.scheme == "obsidian")
+        #expect(openURL?.host == "open")
+        #expect(openURL?.absoluteString.contains("paneType=tab") == true)
+        #expect(openURL?.absoluteString.contains("path=") == true)
     }
 
     @Test func exportConfigurationRequiresEnabledToggle() throws {
