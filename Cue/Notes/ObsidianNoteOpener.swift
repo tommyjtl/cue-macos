@@ -5,7 +5,7 @@ enum ObsidianSavedNoteMessage {
     static let confirmationPrefix = "Saved to Obsidian:"
 
     static func confirmationText(filePath: String) -> String {
-        "\(confirmationPrefix) `\(filePath)`"
+        "\(confirmationPrefix) \(filePath)"
     }
 
     static func savedNoteFileURL(from messageText: String) -> URL? {
@@ -14,19 +14,20 @@ enum ObsidianSavedNoteMessage {
             return nil
         }
 
-        let pattern = #"Saved to Obsidian:\s*`([^`]+)`"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(
-                in: trimmed,
-                range: NSRange(trimmed.startIndex..., in: trimmed)
-              ),
-              match.numberOfRanges > 1,
-              let pathRange = Range(match.range(at: 1), in: trimmed)
-        else {
-            return nil
+        let remainder = trimmed.dropFirst(confirmationPrefix.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let path: String
+        if remainder.hasPrefix("`"),
+           let closingBacktick = remainder.lastIndex(of: "`"),
+           closingBacktick > remainder.startIndex {
+            // Legacy messages wrapped the path in backticks; use the last backtick so
+            // paths that still contain backticks (old filenames) parse correctly.
+            path = String(remainder[remainder.index(after: remainder.startIndex)..<closingBacktick])
+        } else {
+            path = String(remainder)
         }
 
-        let path = String(trimmed[pathRange])
         guard !path.isEmpty else {
             return nil
         }

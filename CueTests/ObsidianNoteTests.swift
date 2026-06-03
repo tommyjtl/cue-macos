@@ -126,6 +126,7 @@ struct ObsidianNoteTests {
         #expect(ObsidianNoteWriter.fileName(from: "Hello, World!") == "Hello, World!.md")
         #expect(ObsidianNoteWriter.fileName(from: "   ") == "note.md")
         #expect(ObsidianNoteWriter.fileName(from: "Bad/Name:Here") == "Bad-Name-Here.md")
+        #expect(ObsidianNoteWriter.fileName(from: "My `code` note") == "My -code- note.md")
     }
 
     @Test func savedNoteMessageParsesFilePath() {
@@ -134,6 +135,13 @@ struct ObsidianNoteTests {
 
         #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: message)?.path == path)
         #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: "Saved to Obsidian.") == nil)
+    }
+
+    @Test func savedNoteMessageParsesPathWithBackticksInLegacyFormat() {
+        let path = "/Users/example/Vault/My `code` note.md"
+        let legacyMessage = "Saved to Obsidian: `\(path)`"
+
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: legacyMessage)?.path == path)
     }
 
     @Test func openURLUsesObsidianURIWithNewTab() {
