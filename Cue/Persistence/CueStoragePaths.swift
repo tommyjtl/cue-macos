@@ -12,7 +12,7 @@ enum CueStoragePathsError: LocalizedError {
 }
 
 enum CueStoragePaths {
-    static func cueRootDirectory() throws -> URL {
+    nonisolated static func cueRootDirectory() throws -> URL {
         guard let applicationSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw CueStoragePathsError.applicationSupportUnavailable
         }
@@ -20,24 +20,24 @@ enum CueStoragePaths {
         return applicationSupportURL.appendingPathComponent("Cue", isDirectory: true)
     }
 
-    static func databaseURL() throws -> URL {
+    nonisolated static func databaseURL() throws -> URL {
         try cueRootDirectory().appendingPathComponent("cue.sqlite", isDirectory: false)
     }
 
-    static func screenshotsDirectory() throws -> URL {
+    nonisolated static func screenshotsDirectory() throws -> URL {
         try cueRootDirectory().appendingPathComponent("screenshots", isDirectory: true)
     }
 
-    static func conversationAttachmentsDirectory() throws -> URL {
+    nonisolated static func conversationAttachmentsDirectory() throws -> URL {
         try cueRootDirectory().appendingPathComponent("conversation-attachments", isDirectory: true)
     }
 
-    static func ensureParentDirectoryExists(for fileURL: URL) throws {
+    nonisolated static func ensureParentDirectoryExists(for fileURL: URL) throws {
         let parentDirectory = fileURL.deletingLastPathComponent()
         try ensureDirectoryExists(at: parentDirectory)
     }
 
-    static func ensureDirectoryExists(at directoryURL: URL) throws {
+    nonisolated static func ensureDirectoryExists(at directoryURL: URL) throws {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     }
 }

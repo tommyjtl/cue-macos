@@ -187,7 +187,7 @@ struct CaptureShortcut: Codable, Equatable {
     }
 }
 
-struct DismissChatShortcut: Codable, Equatable {
+struct DismissChatShortcut: Codable, Equatable, Sendable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case repeatedKey
 
@@ -198,10 +198,10 @@ struct DismissChatShortcut: Codable, Equatable {
         }
     }
 
-    static let escapeKeyCode: UInt16 = 53
+    nonisolated static let escapeKeyCode: UInt16 = 53
     static let defaultMaxIntervalBetweenPresses: TimeInterval = 0.35
     static let duplicateEventTolerance: TimeInterval = 0.05
-    static let defaultValue = DismissChatShortcut(
+    nonisolated static let defaultValue = DismissChatShortcut(
         kind: .repeatedKey,
         keyCode: escapeKeyCode,
         pressCount: 2,
@@ -220,11 +220,11 @@ struct DismissChatShortcut: Codable, Equatable {
     var maxIntervalBetweenPresses: TimeInterval
     var modifierFlagsRawValue: UInt
 
-    var modifierFlags: NSEvent.ModifierFlags {
+    nonisolated var modifierFlags: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifierFlagsRawValue).intersection(CaptureShortcut.modifierFlagsMask)
     }
 
-    var normalized: DismissChatShortcut {
+    nonisolated var normalized: DismissChatShortcut {
         var normalized = self
         normalized.pressCount = min(max(pressCount, 2), 5)
         normalized.maxIntervalBetweenPresses = min(max(maxIntervalBetweenPresses, 0.15), 1.0)
@@ -247,7 +247,7 @@ struct DismissChatShortcut: Codable, Equatable {
         }
     }
 
-    func matches(_ event: NSEvent) -> Bool {
+    nonisolated func matches(_ event: NSEvent) -> Bool {
         guard kind == .repeatedKey else { return false }
         guard let keyCode, event.keyCode == keyCode else { return false }
 
@@ -255,7 +255,7 @@ struct DismissChatShortcut: Codable, Equatable {
         return event.modifierFlags.intersection(modifierMask) == modifierFlags
     }
 
-    static func keyTitle(for keyCode: UInt16) -> String {
+    nonisolated static func keyTitle(for keyCode: UInt16) -> String {
         if keyCode == escapeKeyCode {
             return "Escape"
         }
