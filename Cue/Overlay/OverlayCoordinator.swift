@@ -10,6 +10,7 @@ final class OverlayCoordinator {
         var messages: [ConversationMessageDTO] = []
         var isSending = false
         var canCancelSend = false
+        var conversationProvider: ConversationProvider = .ollama
         var providerDisplayName = ""
         var hasSavedConversations = false
         var supportsWebSearch = false
@@ -70,6 +71,7 @@ final class OverlayCoordinator {
             messages: snapshot.messages,
             isSending: snapshot.isSending,
             canCancelSend: snapshot.canCancelSend,
+            conversationProvider: snapshot.conversationProvider,
             providerDisplayName: snapshot.providerDisplayName,
             hasSavedConversations: snapshot.hasSavedConversations,
             supportsWebSearch: snapshot.supportsWebSearch,

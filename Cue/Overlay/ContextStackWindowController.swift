@@ -185,10 +185,20 @@ final class ContextStackWindowController: NSWindowController {
         }
     }
 
-    func updateConversation(messages: [ConversationMessageDTO], isSending: Bool, canCancelSend: Bool, providerDisplayName: String, hasSavedConversations: Bool, supportsWebSearch: Bool, isWebSearchEnabled: Bool) {
+    func updateConversation(
+        messages: [ConversationMessageDTO],
+        isSending: Bool,
+        canCancelSend: Bool,
+        conversationProvider: ConversationProvider,
+        providerDisplayName: String,
+        hasSavedConversations: Bool,
+        supportsWebSearch: Bool,
+        isWebSearchEnabled: Bool
+    ) {
         viewModel.messages = messages
         viewModel.isSending = isSending
         viewModel.canCancelSend = canCancelSend
+        viewModel.conversationProvider = conversationProvider
         viewModel.providerDisplayName = providerDisplayName
         viewModel.hasSavedConversations = hasSavedConversations
         viewModel.supportsWebSearch = supportsWebSearch
@@ -212,6 +222,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.messages = []
         viewModel.isSending = false
         viewModel.canCancelSend = false
+        viewModel.conversationProvider = .ollama
         viewModel.providerDisplayName = ""
         viewModel.supportsWebSearch = false
         viewModel.isWebSearchEnabled = false

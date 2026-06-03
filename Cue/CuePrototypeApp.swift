@@ -616,8 +616,16 @@ final class AppModel {
         )
     }
 
+    /// Presents newly collected context in the overlay. Keeps chat mode when the composer is already open.
     private func showContextStackNearCursor() {
         syncOverlayState()
+
+        if overlayCoordinator?.isInChatMode == true {
+            overlayCoordinator?.relayout()
+            refreshOverlayPresentationState()
+            return
+        }
+
         overlayCoordinator?.showStack(near: NSEvent.mouseLocation)
         refreshOverlayPresentationState()
     }
@@ -756,6 +764,7 @@ final class AppModel {
                 messages: conversationMessages,
                 isSending: isConversationInProgress,
                 canCancelSend: isConversationInProgress,
+                conversationProvider: conversationConfiguration.provider,
                 providerDisplayName: conversationConfiguration.providerDisplayName,
                 hasSavedConversations: !savedConversations.isEmpty,
                 supportsWebSearch: conversationConfiguration.provider.supportsWebSearch,
