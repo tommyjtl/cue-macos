@@ -128,6 +128,24 @@ struct ObsidianNoteTests {
         #expect(ObsidianNoteWriter.fileName(from: "Bad/Name:Here") == "Bad-Name-Here.md")
     }
 
+    @Test func savedNoteMessageParsesFilePath() {
+        let path = "/Users/example/Obsidian/Vault/2026-06-03/Note title.md"
+        let message = ObsidianSavedNoteMessage.confirmationText(filePath: path)
+
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: message)?.path == path)
+        #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: "Saved to Obsidian.") == nil)
+    }
+
+    @Test func openURLUsesObsidianURIWithNewTab() {
+        let fileURL = URL(fileURLWithPath: "/Users/example/Vault/note.md")
+        let openURL = ObsidianNoteOpener.openURL(for: fileURL)
+
+        #expect(openURL?.scheme == "obsidian")
+        #expect(openURL?.host == "open")
+        #expect(openURL?.absoluteString.contains("paneType=tab") == true)
+        #expect(openURL?.absoluteString.contains("path=") == true)
+    }
+
     @Test func exportConfigurationRequiresEnabledToggle() throws {
         let rootDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("cue-obsidian-config-test-\(UUID().uuidString)", isDirectory: true)
