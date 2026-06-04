@@ -147,8 +147,8 @@ struct MarkExportService {
 
 
         Primary page (oldest in session): \(primaryPage.title) — \(primaryPage.url)
-        Conversation present: \(hasConversation ? "yes" : "no")}
-        User hint present: \(hasUserHint ? "yes" : "no")}
+        Conversation present: \(hasConversation ? "yes" : "no")
+        User hint present: \(hasUserHint ? "yes" : "no")
         """
 
         if hasUserHint {

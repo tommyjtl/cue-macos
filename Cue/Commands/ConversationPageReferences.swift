@@ -13,7 +13,7 @@ enum ConversationPageReferences {
         conversationMessages: [ConversationMessageDTO]
     ) -> PageReference? {
         for message in conversationMessages where message.role == .user {
-            if let page = message.attachedBrowserPages.first {
+            if let page = message.attachedBrowserPages.last {
                 return PageReference(
                     title: displayTitle(for: page.pageTitle, url: page.url),
                     url: page.url,
