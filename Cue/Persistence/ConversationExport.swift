@@ -54,7 +54,7 @@ struct ExportedConversationDocument: Encodable, Equatable, Sendable {
 }
 
 enum ConversationExport {
-    nonisolated static func makeDocument(from conversation: PersistedConversation) -> ExportedConversationDocument {
+    static func makeDocument(from conversation: PersistedConversation) -> ExportedConversationDocument {
         ExportedConversationDocument(
             id: conversation.id,
             title: conversation.title,
@@ -64,7 +64,7 @@ enum ConversationExport {
         )
     }
 
-    nonisolated static func encode(_ conversation: PersistedConversation) throws -> Data {
+    static func encode(_ conversation: PersistedConversation) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -76,7 +76,7 @@ enum ConversationExport {
         return data
     }
 
-    nonisolated static func attachments(for message: ConversationMessageDTO) -> [ExportedConversationAttachment] {
+    static func attachments(for message: ConversationMessageDTO) -> [ExportedConversationAttachment] {
         var attachments: [ExportedConversationAttachment] = []
 
         for image in message.imageAttachments {
@@ -94,7 +94,7 @@ enum ConversationExport {
         return attachments
     }
 
-    nonisolated private static func exportedMessage(from message: ConversationMessageDTO) -> ExportedConversationMessage {
+    private static func exportedMessage(from message: ConversationMessageDTO) -> ExportedConversationMessage {
         ExportedConversationMessage(
             id: message.id,
             role: message.role.rawValue,
@@ -103,7 +103,7 @@ enum ConversationExport {
         )
     }
 
-    nonisolated private static func absoluteImagePath(for reference: ConversationImageAttachmentReference) -> String {
+    private static func absoluteImagePath(for reference: ConversationImageAttachmentReference) -> String {
         guard let rootDirectory = try? CueStoragePaths.conversationAttachmentsDirectory() else {
             return reference.relativePath
         }

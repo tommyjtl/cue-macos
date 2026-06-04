@@ -20,6 +20,7 @@ final class AppModel {
             case persistence = "Persistence"
             case clipboard = "Clipboard"
             case obsidianNote = "Obsidian Note"
+            case commandExport = "Command Export"
         }
 
         let id = UUID()
@@ -34,6 +35,8 @@ final class AppModel {
         static let dismissChatShortcut = "dismiss-chat-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let obsidianExportConfiguration = "obsidian-export-configuration"
+        static let saveExportConfiguration = "save-export-configuration"
+        static let markExportConfiguration = "mark-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
     }
@@ -44,6 +47,7 @@ final class AppModel {
         case debug
         case permissions
         case general
+        case commands
 
         var id: Self { self }
 
@@ -59,6 +63,8 @@ final class AppModel {
                 "Permissions"
             case .general:
                 "General"
+            case .commands:
+                "Commands"
             }
         }
 
@@ -74,6 +80,8 @@ final class AppModel {
                 "lock.shield"
             case .general:
                 "slider.horizontal.3"
+            case .commands:
+                "terminal"
             }
         }
     }
@@ -108,7 +116,13 @@ final class AppModel {
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
     var conversationConfiguration: ConversationConfiguration
-    var obsidianExportConfiguration: ObsidianExportConfiguration
+    var saveExportConfiguration: SaveExportConfiguration
+    var markExportConfiguration: MarkExportConfiguration
+
+    var obsidianExportConfiguration: SaveExportConfiguration {
+        get { saveExportConfiguration }
+        set { saveExportConfiguration = newValue }
+    }
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
     var buildStatus = "Milestone 2 in progress: capture menu actions and selection overlay are wired in."
     var captureErrorMessage: String?
@@ -146,7 +160,8 @@ final class AppModel {
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
-        obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
+        saveExportConfiguration = Self.loadSaveExportConfiguration()
+        markExportConfiguration = Self.loadMarkExportConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
             self?.applyContextSnapshot(snapshot)
         }
@@ -529,7 +544,8 @@ final class AppModel {
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,
-            obsidianConfiguration: obsidianExportConfiguration,
+            saveExportConfiguration: saveExportConfiguration,
+            markExportConfiguration: markExportConfiguration,
             screenshots: capturedScreenshots,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
@@ -550,31 +566,72 @@ final class AppModel {
         syncOverlayState()
     }
 
+    func resetSaveExportSystemPrompt() {
+        var configuration = saveExportConfiguration
+        configuration.systemPrompt = SaveExportPrompts.defaultBase
+        updateSaveExportConfiguration(configuration)
+    }
+
+    func resetMarkExportSystemPrompt() {
+        var configuration = markExportConfiguration
+        configuration.systemPrompt = MarkExportPrompts.defaultBase
+        updateMarkExportConfiguration(configuration)
+    }
+
     func resetObsidianNoteSystemPrompt() {
-        var configuration = obsidianExportConfiguration
-        configuration.noteSystemPrompt = ObsidianNotePrompts.defaultBase
-        updateObsidianExportConfiguration(configuration)
+        resetSaveExportSystemPrompt()
     }
 
-    func updateObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
-        obsidianExportConfiguration = configuration
-        saveObsidianExportConfiguration(configuration)
+    func updateSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
+        saveExportConfiguration = configuration
+        saveSaveExportConfiguration(configuration)
     }
 
-    func obsidianExportConfigurationBinding<Value>(
-        for keyPath: WritableKeyPath<ObsidianExportConfiguration, Value>
+    func updateMarkExportConfiguration(_ configuration: MarkExportConfiguration) {
+        markExportConfiguration = configuration
+        saveMarkExportConfiguration(configuration)
+    }
+
+    func updateObsidianExportConfiguration(_ configuration: SaveExportConfiguration) {
+        updateSaveExportConfiguration(configuration)
+    }
+
+    func saveExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SaveExportConfiguration, Value>
     ) -> Binding<Value> where Value: Equatable {
         Binding(
-            get: { self.obsidianExportConfiguration[keyPath: keyPath] },
+            get: { self.saveExportConfiguration[keyPath: keyPath] },
             set: { newValue in
-                var configuration = self.obsidianExportConfiguration
+                var configuration = self.saveExportConfiguration
                 guard configuration[keyPath: keyPath] != newValue else {
                     return
                 }
                 configuration[keyPath: keyPath] = newValue
-                self.updateObsidianExportConfiguration(configuration)
+                self.updateSaveExportConfiguration(configuration)
             }
         )
+    }
+
+    func markExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<MarkExportConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        Binding(
+            get: { self.markExportConfiguration[keyPath: keyPath] },
+            set: { newValue in
+                var configuration = self.markExportConfiguration
+                guard configuration[keyPath: keyPath] != newValue else {
+                    return
+                }
+                configuration[keyPath: keyPath] = newValue
+                self.updateMarkExportConfiguration(configuration)
+            }
+        )
+    }
+
+    func obsidianExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SaveExportConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        saveExportConfigurationBinding(for: keyPath)
     }
 
     func updateConversationConfiguration(_ configuration: ConversationConfiguration) {
@@ -722,24 +779,49 @@ final class AppModel {
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.conversationConfiguration)
     }
 
-    private static func loadObsidianExportConfiguration() -> ObsidianExportConfiguration {
+    private static func loadSaveExportConfiguration() -> SaveExportConfiguration {
+        if let data = UserDefaults.standard.data(forKey: UserDefaultsKey.saveExportConfiguration),
+           let configuration = try? JSONDecoder().decode(SaveExportConfiguration.self, from: data) {
+            return configuration
+        }
+
         guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.obsidianExportConfiguration) else {
             return .defaultValue
         }
 
         do {
-            return try JSONDecoder().decode(ObsidianExportConfiguration.self, from: data)
+            return try JSONDecoder().decode(SaveExportConfiguration.self, from: data)
         } catch {
             return .defaultValue
         }
     }
 
-    private func saveObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
+    private static func loadMarkExportConfiguration() -> MarkExportConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.markExportConfiguration) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(MarkExportConfiguration.self, from: data)
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
         guard let data = try? JSONEncoder().encode(configuration) else {
             return
         }
 
-        UserDefaults.standard.set(data, forKey: UserDefaultsKey.obsidianExportConfiguration)
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.saveExportConfiguration)
+    }
+
+    private func saveMarkExportConfiguration(_ configuration: MarkExportConfiguration) {
+        guard let data = try? JSONEncoder().encode(configuration) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.markExportConfiguration)
     }
 
     func resetConversationConfiguration() {

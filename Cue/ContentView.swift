@@ -50,6 +50,8 @@ private struct WorkspaceDetailView: View {
             PermissionsSettingsView()
         case .general:
             GeneralSettingsView()
+        case .commands:
+            CommandsSettingsView()
         }
     }
 }
@@ -61,7 +63,6 @@ private struct GeneralSettingsView: View {
                 SoundEffectsSettingsSection()
                 ShortcutSettingsSection()
                 ConversationSettingsSection()
-                ObsidianSettingsSection()
             }
         }
     }
@@ -542,7 +543,7 @@ private struct AppSidebar: View {
     @Binding var selectedSection: AppModel.SidebarSection?
 
     private let primarySections: [AppModel.SidebarSection] = [.inbox, .recents]
-    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .general]
+    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .general, .commands]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

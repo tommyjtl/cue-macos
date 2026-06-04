@@ -11,7 +11,8 @@ final class ConversationCoordinator {
     }
 
     private let conversationService: ConversationService
-    private let obsidianNoteService: ObsidianNoteService
+    private let saveExportService: SaveExportService
+    private let markExportService: MarkExportService
     private let conversationStore: ConversationStore?
     private let messageAttachmentStore: MessageAttachmentStore
     private let onSessionChange: @MainActor (SessionSnapshot) -> Void
@@ -21,13 +22,15 @@ final class ConversationCoordinator {
 
     init(
         conversationService: ConversationService? = nil,
-        obsidianNoteService: ObsidianNoteService? = nil,
+        saveExportService: SaveExportService? = nil,
+        markExportService: MarkExportService? = nil,
         conversationStore: ConversationStore?,
         messageAttachmentStore: MessageAttachmentStore? = nil,
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
-        self.obsidianNoteService = obsidianNoteService ?? ObsidianNoteService()
+        self.saveExportService = saveExportService ?? SaveExportService()
+        self.markExportService = markExportService ?? MarkExportService()
         self.conversationStore = conversationStore
         self.messageAttachmentStore = messageAttachmentStore ?? MessageAttachmentStore()
         self.onSessionChange = onSessionChange
@@ -87,7 +90,8 @@ final class ConversationCoordinator {
     func send(
         draft: String,
         configuration: ConversationConfiguration,
-        obsidianConfiguration: ObsidianExportConfiguration,
+        saveExportConfiguration: SaveExportConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -105,20 +109,37 @@ final class ConversationCoordinator {
             return
         }
 
-        if let noteCommand = NoteCommand.parse(from: trimmedDraft) {
-            sendObsidianNote(
-                noteCommand: noteCommand,
-                draft: trimmedDraft,
-                configuration: configuration,
-                obsidianConfiguration: obsidianConfiguration,
-                screenshots: screenshots,
-                selectedTextContexts: selectedTextContexts,
-                browserPageContexts: browserPageContexts,
-                setStatus: setStatus,
-                setError: setError,
-                syncPanel: syncPanel,
-                onDebugLog: onDebugLog
-            )
+        if let parsedCommand = ComposerCommandRegistry.parse(from: trimmedDraft) {
+            switch parsedCommand {
+            case let .save(saveCommand):
+                sendSaveExport(
+                    saveCommand: saveCommand,
+                    draft: trimmedDraft,
+                    configuration: configuration,
+                    saveExportConfiguration: saveExportConfiguration,
+                    screenshots: screenshots,
+                    selectedTextContexts: selectedTextContexts,
+                    browserPageContexts: browserPageContexts,
+                    setStatus: setStatus,
+                    setError: setError,
+                    syncPanel: syncPanel,
+                    onDebugLog: onDebugLog
+                )
+            case let .mark(markCommand):
+                sendMarkExport(
+                    markCommand: markCommand,
+                    draft: trimmedDraft,
+                    configuration: configuration,
+                    markExportConfiguration: markExportConfiguration,
+                    screenshots: screenshots,
+                    selectedTextContexts: selectedTextContexts,
+                    browserPageContexts: browserPageContexts,
+                    setStatus: setStatus,
+                    setError: setError,
+                    syncPanel: syncPanel,
+                    onDebugLog: onDebugLog
+                )
+            }
             return
         }
 
@@ -264,11 +285,11 @@ final class ConversationCoordinator {
         }
     }
 
-    private func sendObsidianNote(
-        noteCommand: NoteCommand.Parsed,
+    private func sendSaveExport(
+        saveCommand: SaveCommand.Parsed,
         draft: String,
         configuration: ConversationConfiguration,
-        obsidianConfiguration: ObsidianExportConfiguration,
+        saveExportConfiguration: SaveExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -277,20 +298,21 @@ final class ConversationCoordinator {
         syncPanel: @escaping @MainActor () -> Void,
         onDebugLog: ((String) -> Void)? = nil
     ) {
-        if let validationError = obsidianConfiguration.validationError {
+        let enabledMessage = "Enable \"Save conversations with /save\" in Settings → Commands."
+        if let validationError = saveExportConfiguration.validationError(enabledMessage: enabledMessage) {
             setError(validationError)
-            setStatus("Obsidian note export is not configured.")
+            setStatus("Save export is not configured.")
             return
         }
 
-        guard NoteCommand.hasExportableContent(
+        guard SaveCommand.hasExportableContent(
             sessionMessages: session.messages,
             screenshotCount: screenshots.count,
             selectedTextContextCount: selectedTextContexts.count,
             browserPageContextCount: browserPageContexts.count
         ) else {
-            setError("Send a message or attach context before using /note.")
-            setStatus("Nothing to save to Obsidian yet.")
+            setError("Send a message or attach context before using /save.")
+            setStatus("Nothing to save yet.")
             return
         }
 
@@ -329,7 +351,7 @@ final class ConversationCoordinator {
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         session.isConversationInProgress = true
         publishSession()
-        setStatus("Writing Obsidian note with \(configuration.providerDisplayName)...")
+        setStatus("Writing note with \(configuration.providerDisplayName)...")
         setError(nil)
         syncPanel()
 
@@ -351,10 +373,10 @@ final class ConversationCoordinator {
 
             do {
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
-                let result = try await obsidianNoteService.generateAndSave(
-                    userHint: noteCommand.userHint,
+                let result = try await saveExportService.generateAndSave(
+                    userHint: saveCommand.userHint,
                     configuration: configuration,
-                    obsidianConfiguration: obsidianConfiguration,
+                    saveConfiguration: saveExportConfiguration,
                     conversationMessages: conversationMessages,
                     contextualMessages: contextualMessages,
                     browserPageContexts: browserPageContexts,
@@ -370,16 +392,136 @@ final class ConversationCoordinator {
                 )
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
-                setStatus("Saved Obsidian note \"\(result.title)\".")
+                setStatus("Saved note \"\(result.title)\".")
             } catch is CancellationError {
-                setStatus("Obsidian note export cancelled.")
+                setStatus("Save export cancelled.")
             } catch {
                 let message = error.localizedDescription
                 session.messages.append(ConversationMessageDTO(role: .system, text: message))
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
                 setError(message)
-                setStatus("Obsidian note export failed.")
+                setStatus("Save export failed.")
+            }
+        }
+    }
+
+    private func sendMarkExport(
+        markCommand: MarkCommand.Parsed,
+        draft: String,
+        configuration: ConversationConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
+        screenshots: [CapturedScreenshot],
+        selectedTextContexts: [AttachedTextContext],
+        browserPageContexts: [BrowserPageContext],
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
+    ) {
+        if let validationError = markExportConfiguration.validationError {
+            setError(validationError)
+            setStatus("Mark export is not configured.")
+            return
+        }
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: session.messages,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
+
+        guard MarkCommand.hasMarkablePage(
+            browserPageContexts: browserPageContexts,
+            contextualMessages: contextualMessages,
+            conversationMessages: session.messages
+        ) else {
+            setError("Attach a web page before using /mark or //.")
+            setStatus("No page to mark yet.")
+            return
+        }
+
+        let contextLabels = attachedContextLabels(
+            screenshots: screenshots,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
+
+        let conversationID = ensureActiveConversationID()
+        let userMessageID = UUID()
+
+        let imageAttachments: [ConversationImageAttachmentReference]
+        do {
+            imageAttachments = try messageAttachmentStore.saveImages(
+                from: screenshots,
+                conversationID: conversationID,
+                messageID: userMessageID
+            )
+        } catch {
+            setError(error.localizedDescription)
+            return
+        }
+
+        let userMessage = ConversationMessageDTO(
+            id: userMessageID,
+            role: .user,
+            text: draft,
+            attachedContextLabels: contextLabels,
+            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
+            attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
+            imageAttachments: imageAttachments
+        )
+
+        session.messages.append(userMessage)
+        persistConversationSnapshot(conversationID: conversationID, setError: setError)
+        session.isConversationInProgress = true
+        publishSession()
+        setStatus("Writing bookmark with \(configuration.providerDisplayName)...")
+        setError(nil)
+        syncPanel()
+
+        let conversationMessages = session.messages
+
+        cancelTask()
+        conversationTask = Task { @MainActor in
+            defer {
+                conversationTask = nil
+                session.isConversationInProgress = false
+                publishSession()
+                syncPanel()
+            }
+
+            do {
+                let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
+                let result = try await markExportService.generateAndSave(
+                    userHint: markCommand.userHint,
+                    configuration: configuration,
+                    markConfiguration: markExportConfiguration,
+                    conversationMessages: conversationMessages,
+                    contextualMessages: contextualMessages,
+                    browserPageContexts: browserPageContexts,
+                    messageAttachments: messageAttachments,
+                    onDebugLog: onDebugLog
+                )
+
+                session.messages.append(
+                    ConversationMessageDTO(
+                        role: .assistant,
+                        text: ObsidianSavedNoteMessage.confirmationText(filePath: result.fileURL.path)
+                    )
+                )
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setStatus("Saved bookmark \"\(result.title)\".")
+            } catch is CancellationError {
+                setStatus("Mark export cancelled.")
+            } catch {
+                let message = error.localizedDescription
+                session.messages.append(ConversationMessageDTO(role: .system, text: message))
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setError(message)
+                setStatus("Mark export failed.")
             }
         }
     }

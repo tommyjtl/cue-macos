@@ -58,7 +58,7 @@ struct CuePrototypeTests {
         #expect(resolved[messageID]?.first?.data == pngData)
     }
 
-    @Test func conversationExportIncludesAttachmentMetadataWithoutImageBytes() throws {
+    @Test @MainActor func conversationExportIncludesAttachmentMetadataWithoutImageBytes() throws {
         let conversationID = UUID()
         let messageID = UUID()
         let imagePath = "conversation-attachments/\(conversationID.uuidString)/\(messageID.uuidString)/image.png"

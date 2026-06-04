@@ -13,7 +13,7 @@ enum ComposerSlashCommandHighlighter {
             ]
         )
 
-        if let keywordRange = NoteCommand.leadingKeywordRange(in: text) {
+        if let keywordRange = ComposerCommandRegistry.leadingKeywordRange(in: text) {
             let nsRange = NSRange(keywordRange, in: text)
             attributed.addAttribute(.foregroundColor, value: keywordColor, range: nsRange)
         }

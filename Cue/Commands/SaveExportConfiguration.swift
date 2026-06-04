@@ -1,48 +1,50 @@
 import Foundation
 
-struct ObsidianExportConfiguration: Codable, Equatable {
+struct SaveExportConfiguration: Codable, Equatable {
     var isEnabled: Bool
     var exportFolderPath: String
-    var noteSystemPrompt: String
+    var systemPrompt: String
 
-    static let defaultValue = ObsidianExportConfiguration(
+    static let defaultValue = SaveExportConfiguration(
         isEnabled: false,
         exportFolderPath: "",
-        noteSystemPrompt: ObsidianNotePrompts.defaultBase
+        systemPrompt: SaveExportPrompts.defaultBase
     )
 
     init(
         isEnabled: Bool,
         exportFolderPath: String,
-        noteSystemPrompt: String = ObsidianNotePrompts.defaultBase
+        systemPrompt: String = SaveExportPrompts.defaultBase
     ) {
         self.isEnabled = isEnabled
         self.exportFolderPath = exportFolderPath
-        self.noteSystemPrompt = noteSystemPrompt
+        self.systemPrompt = systemPrompt
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         exportFolderPath = try container.decode(String.self, forKey: .exportFolderPath)
-        noteSystemPrompt = try container.decodeIfPresent(String.self, forKey: .noteSystemPrompt)
-            ?? ObsidianNotePrompts.defaultBase
-        if noteSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            noteSystemPrompt = ObsidianNotePrompts.defaultBase
-        }
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case isEnabled
-        case exportFolderPath
-        case noteSystemPrompt
+        let prompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
+            ?? container.decodeIfPresent(String.self, forKey: .noteSystemPrompt)
+            ?? SaveExportPrompts.defaultBase
+        systemPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? SaveExportPrompts.defaultBase
+            : prompt
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(isEnabled, forKey: .isEnabled)
         try container.encode(exportFolderPath, forKey: .exportFolderPath)
-        try container.encode(noteSystemPrompt, forKey: .noteSystemPrompt)
+        try container.encode(systemPrompt, forKey: .systemPrompt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case exportFolderPath
+        case systemPrompt
+        case noteSystemPrompt
     }
 
     var exportFolderURL: URL? {
@@ -54,20 +56,27 @@ struct ObsidianExportConfiguration: Codable, Equatable {
         return URL(fileURLWithPath: trimmed, isDirectory: true)
     }
 
-    var validationError: String? {
+    func validationError(enabledMessage: String) -> String? {
         guard isEnabled else {
-            return "Enable \"Save /note to Obsidian\" in Settings."
+            return enabledMessage
         }
 
         guard let folderURL = exportFolderURL else {
-            return "Choose an Obsidian export folder in Settings."
+            return "Choose a save export folder in Settings → Commands."
         }
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return "The Obsidian export folder does not exist."
+            return "The save export folder does not exist."
         }
 
         return nil
+    }
+}
+
+extension SaveExportConfiguration {
+    var noteSystemPrompt: String {
+        get { systemPrompt }
+        set { systemPrompt = newValue }
     }
 }

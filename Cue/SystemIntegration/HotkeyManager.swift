@@ -28,10 +28,10 @@ struct CaptureShortcut: Codable, Equatable {
         var id: UInt16 { keyCode }
     }
 
-    static let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-    static let configurableModifierOptions: [NSEvent.ModifierFlags] = [.option, .control, .command, .shift]
-    static let doubleModifierOptions: [NSEvent.ModifierFlags] = [.option, .control, .command]
-    static let availableKeys: [KeyOption] = [
+    nonisolated(unsafe) static let modifierFlagsMask: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+    nonisolated(unsafe) static let configurableModifierOptions: [NSEvent.ModifierFlags] = [.option, .control, .command, .shift]
+    nonisolated(unsafe) static let doubleModifierOptions: [NSEvent.ModifierFlags] = [.option, .control, .command]
+    nonisolated(unsafe) static let availableKeys: [KeyOption] = [
         .init(keyCode: 18, title: "1"),
         .init(keyCode: 19, title: "2"),
         .init(keyCode: 20, title: "3"),
@@ -210,7 +210,7 @@ struct DismissChatShortcut: Codable, Equatable, Sendable {
     )
     static let minimumPressCount = 2
 
-    static let availableKeys: [CaptureShortcut.KeyOption] = {
+    nonisolated(unsafe) static let availableKeys: [CaptureShortcut.KeyOption] = {
         [CaptureShortcut.KeyOption(keyCode: escapeKeyCode, title: "Escape")] + CaptureShortcut.availableKeys
     }()
 

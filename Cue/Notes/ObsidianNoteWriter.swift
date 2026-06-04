@@ -15,6 +15,11 @@ enum ObsidianNoteWriterError: LocalizedError {
 }
 
 struct ObsidianNoteWriter {
+    enum ExportKind: Equatable {
+        case saveConversation
+        case markPage(host: String)
+    }
+
     struct Reference: Equatable {
         let title: String
         let url: String
@@ -27,6 +32,25 @@ struct ObsidianNoteWriter {
         let references: [Reference]
         let createdAt: Date
         let exportFolderURL: URL
+        let exportKind: ExportKind
+
+        init(
+            title: String,
+            body: String,
+            sourceURL: String?,
+            references: [Reference],
+            createdAt: Date,
+            exportFolderURL: URL,
+            exportKind: ExportKind = .saveConversation
+        ) {
+            self.title = title
+            self.body = body
+            self.sourceURL = sourceURL
+            self.references = references
+            self.createdAt = createdAt
+            self.exportFolderURL = exportFolderURL
+            self.exportKind = exportKind
+        }
     }
 
     struct WriteResult: Equatable {
@@ -49,7 +73,7 @@ struct ObsidianNoteWriter {
             throw ObsidianNoteWriterError.writeFailed("Cue could not create the date folder: \(error.localizedDescription)")
         }
 
-        let fileName = Self.fileName(from: trimmedTitle)
+        let fileName = Self.fileName(from: trimmedTitle, exportKind: input.exportKind)
         var fileURL = dateDirectory.appendingPathComponent(fileName, isDirectory: false)
 
         var collisionIndex = 2
@@ -64,7 +88,8 @@ struct ObsidianNoteWriter {
             body: input.body,
             sourceURL: input.sourceURL,
             references: input.references,
-            createdAt: input.createdAt
+            createdAt: input.createdAt,
+            exportKind: input.exportKind
         )
 
         do {
@@ -76,30 +101,60 @@ struct ObsidianNoteWriter {
         return WriteResult(fileURL: fileURL, title: trimmedTitle)
     }
 
-    static func fileName(from title: String) -> String {
+    static func fileName(from title: String, exportKind: ExportKind = .saveConversation) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "note.md"
+            switch exportKind {
+            case .saveConversation:
+                return "note.md"
+            case .markPage(let host):
+                return sanitizedMarkBaseName("mark", host: host) + ".md"
+            }
         }
 
+        let sanitized = sanitizedTitleBase(from: trimmed)
+        guard !sanitized.isEmpty else {
+            switch exportKind {
+            case .saveConversation:
+                return "note.md"
+            case .markPage(let host):
+                return sanitizedMarkBaseName("mark", host: host) + ".md"
+            }
+        }
+
+        switch exportKind {
+        case .saveConversation:
+            return "\(String(sanitized.prefix(120))).md"
+        case .markPage(let host):
+            let titlePart = String(sanitized.prefix(80))
+            return "\(sanitizedMarkBaseName(titlePart, host: host)).md"
+        }
+    }
+
+    private static func sanitizedMarkBaseName(_ titlePart: String, host: String) -> String {
+        let hostPart = sanitizedTitleBase(from: host.isEmpty ? "page" : host)
+        if titlePart.isEmpty {
+            return hostPart.isEmpty ? "mark" : hostPart
+        }
+        if hostPart.isEmpty {
+            return titlePart
+        }
+        return "\(titlePart)--\(hostPart)"
+    }
+
+    private static func sanitizedTitleBase(from title: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|`")
-        let sanitizedScalars = trimmed.unicodeScalars.map { scalar -> Character in
+        let sanitizedScalars = title.unicodeScalars.map { scalar -> Character in
             if invalidCharacters.contains(scalar) {
                 return "-"
             }
             return Character(scalar)
         }
 
-        let sanitized = String(sanitizedScalars)
+        return String(sanitizedScalars)
             .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-
-        guard !sanitized.isEmpty else {
-            return "note.md"
-        }
-
-        return "\(String(sanitized.prefix(120))).md"
     }
 
     private static func buildMarkdown(
@@ -107,22 +162,41 @@ struct ObsidianNoteWriter {
         body: String,
         sourceURL: String?,
         references: [Reference],
-        createdAt: Date
+        createdAt: Date,
+        exportKind: ExportKind
     ) -> String {
+        let tags: String
+        switch exportKind {
+        case .saveConversation:
+            tags = "[cue, save]"
+        case .markPage:
+            tags = "[cue, mark]"
+        }
+
         var frontmatterLines = [
             "---",
             "title: \"\(yamlEscaped(title))\"",
             "created: \(iso8601Formatter.string(from: createdAt))",
-            "tags: [cue]"
+            "tags: \(tags)"
         ]
 
         if let sourceURL, !sourceURL.isEmpty {
             frontmatterLines.append("source: \"\(yamlEscaped(sourceURL))\"")
         }
 
+        if case .markPage(let host) = exportKind, !host.isEmpty {
+            frontmatterLines.append("domain: \"\(yamlEscaped(host))\"")
+        }
+
         frontmatterLines.append("---")
 
-        let noteBody = appendReferencesSection(to: body, references: references)
+        let noteBody: String
+        switch exportKind {
+        case .saveConversation:
+            noteBody = appendReferencesSection(to: body, references: references)
+        case .markPage:
+            noteBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let trimmedBody = noteBody.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedBody.isEmpty {
             return frontmatterLines.joined(separator: "\n") + "\n"
