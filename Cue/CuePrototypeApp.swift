@@ -39,6 +39,7 @@ final class AppModel {
         static let markExportConfiguration = "mark-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
+        static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -112,6 +113,7 @@ final class AppModel {
     var selectedSection: SidebarSection? = .inbox
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
+    var hideMainAppOnStart: Bool
     var captureShortcut: CaptureShortcut
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
@@ -167,6 +169,7 @@ final class AppModel {
 
         conversationStore = openedConversationStore
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
+        hideMainAppOnStart = Self.loadHideMainAppOnStart()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
@@ -193,9 +196,11 @@ final class AppModel {
 
         hasStartedBackgroundServices = true
 
-        // Open main window on every app launch.
+        // Open main window on launch unless the user prefers menu-bar-only startup.
         Task { @MainActor in
-            showMainWindow()
+            if shouldShowMainWindowOnLaunch {
+                showMainWindow()
+            }
         }
 
         // Start permission monitoring from AppModel (stable lifecycle).
@@ -511,6 +516,19 @@ final class AppModel {
     func updateSoundEffectsEnabled(_ isEnabled: Bool) {
         soundEffectsEnabled = isEnabled
         saveSoundEffectsEnabled(isEnabled)
+    }
+
+    func updateHideMainAppOnStart(_ isEnabled: Bool) {
+        hideMainAppOnStart = isEnabled
+        saveHideMainAppOnStart(isEnabled)
+    }
+
+    private var shouldShowMainWindowOnLaunch: Bool {
+        if !hasCompletedOnboarding {
+            return true
+        }
+
+        return !hideMainAppOnStart
     }
 
     func completeOnboarding() {
@@ -845,6 +863,14 @@ final class AppModel {
 
     private func saveSoundEffectsEnabled(_ isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.soundEffectsEnabled)
+    }
+
+    private static func loadHideMainAppOnStart() -> Bool {
+        AppPreferenceKeys.hideMainAppOnStart
+    }
+
+    private func saveHideMainAppOnStart(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.hideMainAppOnStart)
     }
 
     private func syncOverlayState() {
@@ -1276,6 +1302,34 @@ private struct MenuBarContentView: View {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
+    }
+}
+
+struct StartupSettingsSection: View {
+    @Environment(AppModel.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Hide main app on start",
+                    subtitle: appState.hideMainAppOnStart ? "On" : "Off"
+                ) {
+                    Toggle("Hide main app on start", isOn: hideMainAppOnStartBinding)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+            }
+
+            SettingsFootnote("When on, Cue stays in the menu bar at launch. Open the main window from the menu bar or Settings… (⌘,). Onboarding still opens the window the first time.")
+        }
+    }
+
+    private var hideMainAppOnStartBinding: Binding<Bool> {
+        Binding(
+            get: { appState.hideMainAppOnStart },
+            set: { appState.updateHideMainAppOnStart($0) }
+        )
     }
 }
 
