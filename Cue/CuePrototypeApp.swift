@@ -20,6 +20,7 @@ final class AppModel {
             case persistence = "Persistence"
             case clipboard = "Clipboard"
             case obsidianNote = "Obsidian Note"
+            case commandExport = "Command Export"
         }
 
         let id = UUID()
@@ -34,8 +35,11 @@ final class AppModel {
         static let dismissChatShortcut = "dismiss-chat-shortcut"
         static let conversationConfiguration = "conversation-configuration"
         static let obsidianExportConfiguration = "obsidian-export-configuration"
+        static let saveExportConfiguration = "save-export-configuration"
+        static let markExportConfiguration = "mark-export-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
+        static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -44,6 +48,7 @@ final class AppModel {
         case debug
         case permissions
         case general
+        case commands
 
         var id: Self { self }
 
@@ -59,6 +64,8 @@ final class AppModel {
                 "Permissions"
             case .general:
                 "General"
+            case .commands:
+                "Commands"
             }
         }
 
@@ -74,6 +81,8 @@ final class AppModel {
                 "lock.shield"
             case .general:
                 "slider.horizontal.3"
+            case .commands:
+                "terminal"
             }
         }
     }
@@ -104,11 +113,18 @@ final class AppModel {
     var selectedSection: SidebarSection? = .inbox
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
+    var hideMainAppOnStart: Bool
     var captureShortcut: CaptureShortcut
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
     var conversationConfiguration: ConversationConfiguration
-    var obsidianExportConfiguration: ObsidianExportConfiguration
+    var saveExportConfiguration: SaveExportConfiguration
+    var markExportConfiguration: MarkExportConfiguration
+
+    var obsidianExportConfiguration: SaveExportConfiguration {
+        get { saveExportConfiguration }
+        set { saveExportConfiguration = newValue }
+    }
     let productGoal = "Capture context, ask locally, and keep the lightweight overlay workflow fast."
     var buildStatus = "Milestone 2 in progress: capture menu actions and selection overlay are wired in."
     var captureErrorMessage: String?
@@ -121,6 +137,7 @@ final class AppModel {
     var selectedSavedConversationID: UUID?
     var isCaptureInProgress = false
     var isConversationInProgress = false
+    var composerInFlightActivity: ComposerInFlightActivity = .none
     var isContextOverlayVisible = false
     var isContextOverlayInChatMode = false
     /// True while the user is in an overlay-driven conversation flow (started from context or resumed after collecting more context).
@@ -140,20 +157,36 @@ final class AppModel {
     }
 
     init() {
-        conversationStore = try? ConversationStore()
+        let openedConversationStore: ConversationStore?
+        let conversationStoreOpenError: String?
+        do {
+            openedConversationStore = try ConversationStore()
+            conversationStoreOpenError = nil
+        } catch {
+            openedConversationStore = nil
+            conversationStoreOpenError = error.localizedDescription
+        }
+
+        conversationStore = openedConversationStore
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
+        hideMainAppOnStart = Self.loadHideMainAppOnStart()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
         conversationConfiguration = Self.loadConversationConfiguration()
-        obsidianExportConfiguration = Self.loadObsidianExportConfiguration()
+        saveExportConfiguration = Self.loadSaveExportConfiguration()
+        markExportConfiguration = Self.loadMarkExportConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
             self?.applyContextSnapshot(snapshot)
         }
         conversationCoordinator = ConversationCoordinator(conversationStore: conversationStore) { [weak self] snapshot in
             self?.applyConversationSnapshot(snapshot)
         }
-        loadPersistedConversations()
+        let persistenceLoadError = loadPersistedConversations()
+        logPersistenceHealthOnLaunch(
+            storeOpenError: conversationStoreOpenError,
+            loadError: persistenceLoadError
+        )
     }
 
     func startBackgroundServicesIfNeeded() {
@@ -163,9 +196,11 @@ final class AppModel {
 
         hasStartedBackgroundServices = true
 
-        // Open main window on every app launch.
+        // Open main window on launch unless the user prefers menu-bar-only startup.
         Task { @MainActor in
-            showMainWindow()
+            if shouldShowMainWindowOnLaunch {
+                showMainWindow()
+            }
         }
 
         // Start permission monitoring from AppModel (stable lifecycle).
@@ -247,7 +282,10 @@ final class AppModel {
                 self?.appendDebugLog(message, source: .clipboard)
             },
             shouldBypassAttachDetection: { [weak self] in
-                self?.overlayCoordinator?.isComposerInputFocused ?? false
+                if self?.overlayCoordinator?.isComposerInputFocused == true {
+                    return true
+                }
+                return MainWindowTextInputFocus.isEditingInSettingsWindow
             }
         )
     }
@@ -480,6 +518,19 @@ final class AppModel {
         saveSoundEffectsEnabled(isEnabled)
     }
 
+    func updateHideMainAppOnStart(_ isEnabled: Bool) {
+        hideMainAppOnStart = isEnabled
+        saveHideMainAppOnStart(isEnabled)
+    }
+
+    private var shouldShowMainWindowOnLaunch: Bool {
+        if !hasCompletedOnboarding {
+            return true
+        }
+
+        return !hideMainAppOnStart
+    }
+
     func completeOnboarding() {
         UserDefaults.standard.set(true, forKey: UserDefaultsKey.hasCompletedOnboarding)
         hasCompletedOnboarding = true
@@ -529,7 +580,8 @@ final class AppModel {
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,
-            obsidianConfiguration: obsidianExportConfiguration,
+            saveExportConfiguration: saveExportConfiguration,
+            markExportConfiguration: markExportConfiguration,
             screenshots: capturedScreenshots,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
@@ -550,31 +602,64 @@ final class AppModel {
         syncOverlayState()
     }
 
-    func resetObsidianNoteSystemPrompt() {
-        var configuration = obsidianExportConfiguration
-        configuration.noteSystemPrompt = ObsidianNotePrompts.defaultBase
-        updateObsidianExportConfiguration(configuration)
+    func resetMarkExportSystemPrompt() {
+        var configuration = markExportConfiguration
+        configuration.systemPrompt = MarkExportPrompts.defaultBase
+        updateMarkExportConfiguration(configuration)
     }
 
-    func updateObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
-        obsidianExportConfiguration = configuration
-        saveObsidianExportConfiguration(configuration)
+    func resetObsidianNoteSystemPrompt() {}
+
+    func updateSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
+        saveExportConfiguration = configuration
+        saveSaveExportConfiguration(configuration)
     }
 
-    func obsidianExportConfigurationBinding<Value>(
-        for keyPath: WritableKeyPath<ObsidianExportConfiguration, Value>
+    func updateMarkExportConfiguration(_ configuration: MarkExportConfiguration) {
+        markExportConfiguration = configuration
+        saveMarkExportConfiguration(configuration)
+    }
+
+    func updateObsidianExportConfiguration(_ configuration: SaveExportConfiguration) {
+        updateSaveExportConfiguration(configuration)
+    }
+
+    func saveExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SaveExportConfiguration, Value>
     ) -> Binding<Value> where Value: Equatable {
         Binding(
-            get: { self.obsidianExportConfiguration[keyPath: keyPath] },
+            get: { self.saveExportConfiguration[keyPath: keyPath] },
             set: { newValue in
-                var configuration = self.obsidianExportConfiguration
+                var configuration = self.saveExportConfiguration
                 guard configuration[keyPath: keyPath] != newValue else {
                     return
                 }
                 configuration[keyPath: keyPath] = newValue
-                self.updateObsidianExportConfiguration(configuration)
+                self.updateSaveExportConfiguration(configuration)
             }
         )
+    }
+
+    func markExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<MarkExportConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        Binding(
+            get: { self.markExportConfiguration[keyPath: keyPath] },
+            set: { newValue in
+                var configuration = self.markExportConfiguration
+                guard configuration[keyPath: keyPath] != newValue else {
+                    return
+                }
+                configuration[keyPath: keyPath] = newValue
+                self.updateMarkExportConfiguration(configuration)
+            }
+        )
+    }
+
+    func obsidianExportConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SaveExportConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        saveExportConfigurationBinding(for: keyPath)
     }
 
     func updateConversationConfiguration(_ configuration: ConversationConfiguration) {
@@ -722,24 +807,49 @@ final class AppModel {
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.conversationConfiguration)
     }
 
-    private static func loadObsidianExportConfiguration() -> ObsidianExportConfiguration {
+    private static func loadSaveExportConfiguration() -> SaveExportConfiguration {
+        if let data = UserDefaults.standard.data(forKey: UserDefaultsKey.saveExportConfiguration),
+           let configuration = try? JSONDecoder().decode(SaveExportConfiguration.self, from: data) {
+            return configuration
+        }
+
         guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.obsidianExportConfiguration) else {
             return .defaultValue
         }
 
         do {
-            return try JSONDecoder().decode(ObsidianExportConfiguration.self, from: data)
+            return try JSONDecoder().decode(SaveExportConfiguration.self, from: data)
         } catch {
             return .defaultValue
         }
     }
 
-    private func saveObsidianExportConfiguration(_ configuration: ObsidianExportConfiguration) {
+    private static func loadMarkExportConfiguration() -> MarkExportConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.markExportConfiguration) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(MarkExportConfiguration.self, from: data)
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
         guard let data = try? JSONEncoder().encode(configuration) else {
             return
         }
 
-        UserDefaults.standard.set(data, forKey: UserDefaultsKey.obsidianExportConfiguration)
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.saveExportConfiguration)
+    }
+
+    private func saveMarkExportConfiguration(_ configuration: MarkExportConfiguration) {
+        guard let data = try? JSONEncoder().encode(configuration) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.markExportConfiguration)
     }
 
     func resetConversationConfiguration() {
@@ -755,6 +865,14 @@ final class AppModel {
         UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.soundEffectsEnabled)
     }
 
+    private static func loadHideMainAppOnStart() -> Bool {
+        AppPreferenceKeys.hideMainAppOnStart
+    }
+
+    private func saveHideMainAppOnStart(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.hideMainAppOnStart)
+    }
+
     private func syncOverlayState() {
         overlayCoordinator?.update(
             snapshot: OverlayCoordinator.Snapshot(
@@ -764,6 +882,7 @@ final class AppModel {
                 messages: conversationMessages,
                 isSending: isConversationInProgress,
                 canCancelSend: isConversationInProgress,
+                inFlightActivity: composerInFlightActivity,
                 conversationProvider: conversationConfiguration.provider,
                 providerDisplayName: conversationConfiguration.providerDisplayName,
                 hasSavedConversations: !savedConversations.isEmpty,
@@ -773,10 +892,29 @@ final class AppModel {
         )
     }
 
-    private func loadPersistedConversations() {
+    @discardableResult
+    private func loadPersistedConversations() -> String? {
+        var loadError: String?
         conversationCoordinator?.loadPersistedConversations(onError: { [weak self] message in
+            loadError = message
             self?.setCaptureErrorMessage(message, source: .persistence)
         })
+        return loadError
+    }
+
+    private func logPersistenceHealthOnLaunch(storeOpenError: String?, loadError: String?) {
+        let loadedMessageCount = savedConversations.reduce(0) { partial, conversation in
+            partial + conversation.messages.count
+        }
+        let lines = PersistenceHealthDiagnostics.launchReportLines(
+            context: PersistenceHealthDiagnostics.LaunchContext(
+                storeOpenError: storeOpenError,
+                loadedConversationCount: savedConversations.count,
+                loadedMessageCount: loadedMessageCount,
+                loadError: loadError
+            )
+        )
+        appendDebugLog(lines.joined(separator: "\n"), source: .persistence)
     }
 
     func clearDebugLog() {
@@ -824,6 +962,7 @@ final class AppModel {
         savedConversations = snapshot.savedConversations
         selectedSavedConversationID = snapshot.selectedSavedConversationID
         isConversationInProgress = snapshot.isConversationInProgress
+        composerInFlightActivity = snapshot.inFlightActivity
         syncOverlayState()
     }
 
@@ -844,6 +983,18 @@ final class AppModel {
 
     private var contextItemCount: Int {
         capturedScreenshots.count + selectedTextContexts.count + browserPageContexts.count
+    }
+}
+
+/// Menu-bar apps use `.accessory` by default; the settings window needs `.regular` for text fields and copy/paste.
+enum MainWindowActivationPolicy {
+    static func applyForMainSettingsWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func restoreMenuBarAccessoryPolicy() {
+        NSApp.setActivationPolicy(.accessory)
     }
 }
 
@@ -914,8 +1065,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+enum MainWindowTextInputFocus {
+    static var isEditingInSettingsWindow: Bool {
+        guard let window = NSApp.keyWindow,
+              window.title == "Cue",
+              NSApp.isActive else {
+            return false
+        }
+
+        guard let responder = window.firstResponder else {
+            return false
+        }
+
+        return responder is NSTextView || responder is NSTextField
+    }
+}
+
+/// Routes standard edit shortcuts to SwiftUI text fields hosted in the settings window.
+private final class MainSettingsWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) {
+            return true
+        }
+
+        guard let firstResponder else {
+            return false
+        }
+
+        return ComposerEditShortcut.perform(with: event, sender: firstResponder)
+    }
+}
+
 @MainActor
 final class MainContentWindowController: NSWindowController, NSWindowDelegate {
+    private var editShortcutMonitor: Any?
+
     init(appModel: AppModel) {
         let hostingController = NSHostingController(
             rootView: ContentView()
@@ -925,7 +1109,7 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
                     minHeight: SettingsLayout.MainWindow.minHeight
                 )
         )
-        let window = NSWindow(contentViewController: hostingController)
+        let window = MainSettingsWindow(contentViewController: hostingController)
 
         window.title = "Cue"
         window.setContentSize(
@@ -946,6 +1130,13 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         clampWindowFrameIfNeeded()
+        installEditShortcutMonitor()
+    }
+
+    deinit {
+        if let editShortcutMonitor {
+            NSEvent.removeMonitor(editShortcutMonitor)
+        }
     }
 
     @available(*, unavailable)
@@ -959,8 +1150,34 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
         }
 
         clampWindowFrameIfNeeded()
-        NSApp.activate(ignoringOtherApps: true)
+        MainWindowActivationPolicy.applyForMainSettingsWindow()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        MainWindowActivationPolicy.applyForMainSettingsWindow()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        MainWindowActivationPolicy.restoreMenuBarAccessoryPolicy()
+    }
+
+    private func installEditShortcutMonitor() {
+        editShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  window === NSApp.keyWindow,
+                  ComposerEditShortcut.selector(for: event) != nil else {
+                return event
+            }
+
+            let sender = window.firstResponder ?? window
+            if ComposerEditShortcut.perform(with: event, sender: sender) {
+                return nil
+            }
+
+            return event
+        }
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -1085,6 +1302,34 @@ private struct MenuBarContentView: View {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
+    }
+}
+
+struct StartupSettingsSection: View {
+    @Environment(AppModel.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Hide main app on start",
+                    subtitle: appState.hideMainAppOnStart ? "On" : "Off"
+                ) {
+                    Toggle("Hide main app on start", isOn: hideMainAppOnStartBinding)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+            }
+
+            SettingsFootnote("When on, Cue stays in the menu bar at launch. Open the main window from the menu bar or Settings… (⌘,). Onboarding still opens the window the first time.")
+        }
+    }
+
+    private var hideMainAppOnStartBinding: Binding<Bool> {
+        Binding(
+            get: { appState.hideMainAppOnStart },
+            set: { appState.updateHideMainAppOnStart($0) }
+        )
     }
 }
 

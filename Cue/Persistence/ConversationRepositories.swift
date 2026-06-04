@@ -26,7 +26,8 @@ final class ConversationRepository {
         defer { sqlite3_finalize(statement) }
 
         var rows: [PersistedConversationRow] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var stepResult = sqlite3_step(statement)
+        while stepResult == SQLITE_ROW {
             rows.append(
                 PersistedConversationRow(
                     id: try SQLiteRepositorySupport.uuid(at: 0, in: statement),
@@ -35,9 +36,10 @@ final class ConversationRepository {
                     updatedAt: SQLiteRepositorySupport.date(at: 3, in: statement)
                 )
             )
+            stepResult = sqlite3_step(statement)
         }
 
-        try SQLiteRepositorySupport.finalizeStepResult(for: statement, database: database)
+        try SQLiteRepositorySupport.finishSelect(stepResult: stepResult, database: database)
         return rows
     }
 
@@ -115,7 +117,8 @@ final class MessageRepository {
             )
         }
 
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var stepResult = sqlite3_step(statement)
+        while stepResult == SQLITE_ROW {
             let messageID = try SQLiteRepositorySupport.uuid(at: 0, in: statement)
             let roleValue = SQLiteRepositorySupport.string(at: 1, in: statement) ?? ConversationMessageDTO.Role.assistant.rawValue
             guard let role = ConversationMessageDTO.Role(rawValue: roleValue) else {
@@ -160,11 +163,13 @@ final class MessageRepository {
             default:
                 currentText += partText
             }
+
+            stepResult = sqlite3_step(statement)
         }
 
         flushCurrentMessage()
 
-        try SQLiteRepositorySupport.finalizeStepResult(for: statement, database: database)
+        try SQLiteRepositorySupport.finishSelect(stepResult: stepResult, database: database)
         return messages
     }
 
@@ -259,9 +264,10 @@ private enum SQLiteRepositorySupport {
         }
     }
 
-    static func finalizeStepResult(for statement: OpaquePointer?, database: OpaquePointer?) throws {
-        let result = sqlite3_errcode(database)
-        guard result == SQLITE_OK else {
+    /// Validates the final `sqlite3_step` result after a SELECT loop.
+    /// Do not use `sqlite3_errcode` here — it can still be `SQLITE_ROW` after the last row.
+    static func finishSelect(stepResult: Int32, database: OpaquePointer?) throws {
+        guard stepResult == SQLITE_DONE else {
             throw ConversationStoreError.statementExecutionFailed(databaseErrorMessage(database: database))
         }
     }

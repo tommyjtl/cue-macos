@@ -120,6 +120,54 @@ struct SettingsMultilineTextEditor: NSViewRepresentable {
     }
 }
 
+struct SettingsReadOnlyTextView: NSViewRepresentable {
+    let text: String
+    var fontSize: CGFloat = 12
+    var minHeight: CGFloat = 120
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let textView = SettingsTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.string = text
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: minHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        if let textContainer = textView.textContainer {
+            textContainer.widthTracksTextView = true
+            textContainer.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        }
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? SettingsTextView,
+              textView.string != text else {
+            return
+        }
+
+        textView.string = text
+    }
+}
+
 private final class SettingsTextView: NSTextView {
     var onEditingChanged: ((Bool) -> Void)?
 

@@ -29,8 +29,8 @@ Linear-style tickets: **title** = problem or outcome; body = scope. Two lanes on
 
 ### Bookmarks & notes
 
-- [x] **Export chat context to Obsidian with `/note`** — `/note` or `/notes` in composer writes structured markdown to a user-chosen folder under `{folder}/{yyyy-MM-dd}/`. <mark>May 30, 2026</mark>
-- [ ] **Quick-save web pages with `//` in the composer** — When web-page context is present (e.g. extension push via `BrowserWebServer`), typing `//` bookmarks URL + page content—no `/bookmark` command. User-configured export folder (mirror `/note` Settings validation; TBD shared vs dedicated path). Broader: save/bookmark full sessions or context bundles for multi-day workflows. <mark>Jun 2, 2026</mark>
+- [x] **Export chat context with `/save`** — `/save` (aliases `/note`, `/notes`) exports conversation JSON via save dialog (same as Recents → Export JSON). Settings → Commands (toggle + optional default folder). <mark>Jun 4, 2026</mark>
+- [x] **Mark pages with `/mark` and `//`** — Bookmarks oldest page in session; separate export folder; `{title}--{domain}.md`. `//` is a quick alias. Settings → Commands. <mark>Jun 4, 2026</mark>
 - [ ] **Daily digest with review and Obsidian export** — End-of-day (or on-demand) local summary of conversations, topics, and notable context; in-app review (edit/pin/discard); export markdown with frontmatter to a vault folder; optional templates (Learned / Decisions / Follow-ups / References). <mark>May 25, 2026</mark>
 
 ### AI & search

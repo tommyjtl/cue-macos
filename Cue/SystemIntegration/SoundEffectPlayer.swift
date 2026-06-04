@@ -80,6 +80,7 @@ enum SoundEffectPlayer {
 
 enum AppPreferenceKeys {
     static let soundEffectsEnabledKey = "sound-effects-enabled"
+    static let hideMainAppOnStartKey = "hide-main-app-on-start"
 
     static var soundEffectsEnabled: Bool {
         if UserDefaults.standard.object(forKey: soundEffectsEnabledKey) == nil {
@@ -87,5 +88,9 @@ enum AppPreferenceKeys {
         }
 
         return UserDefaults.standard.bool(forKey: soundEffectsEnabledKey)
+    }
+
+    static var hideMainAppOnStart: Bool {
+        UserDefaults.standard.bool(forKey: hideMainAppOnStartKey)
     }
 }

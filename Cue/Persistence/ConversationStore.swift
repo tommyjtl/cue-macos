@@ -56,8 +56,12 @@ final class ConversationStore {
     private let messageRepository: MessageRepository
     private var database: OpaquePointer? { databaseManager.database }
 
-    init() throws {
-        databaseManager = try DatabaseManager(databaseURL: CueStoragePaths.databaseURL())
+    convenience init() throws {
+        try self.init(databaseURL: CueStoragePaths.databaseURL())
+    }
+
+    init(databaseURL: URL) throws {
+        databaseManager = try DatabaseManager(databaseURL: databaseURL)
         conversationRepository = ConversationRepository(database: databaseManager.database)
         messageRepository = MessageRepository(database: databaseManager.database)
         try databaseManager.bootstrapConversationStoreSchema()

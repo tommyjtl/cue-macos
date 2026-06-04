@@ -8,10 +8,11 @@ final class ConversationCoordinator {
         var savedConversations: [PersistedConversation] = []
         var selectedSavedConversationID: UUID?
         var isConversationInProgress = false
+        var inFlightActivity: ComposerInFlightActivity = .none
     }
 
     private let conversationService: ConversationService
-    private let obsidianNoteService: ObsidianNoteService
+    private let markExportService: MarkExportService
     private let conversationStore: ConversationStore?
     private let messageAttachmentStore: MessageAttachmentStore
     private let onSessionChange: @MainActor (SessionSnapshot) -> Void
@@ -21,13 +22,13 @@ final class ConversationCoordinator {
 
     init(
         conversationService: ConversationService? = nil,
-        obsidianNoteService: ObsidianNoteService? = nil,
+        markExportService: MarkExportService? = nil,
         conversationStore: ConversationStore?,
         messageAttachmentStore: MessageAttachmentStore? = nil,
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
-        self.obsidianNoteService = obsidianNoteService ?? ObsidianNoteService()
+        self.markExportService = markExportService ?? MarkExportService()
         self.conversationStore = conversationStore
         self.messageAttachmentStore = messageAttachmentStore ?? MessageAttachmentStore()
         self.onSessionChange = onSessionChange
@@ -55,6 +56,7 @@ final class ConversationCoordinator {
         session.messages.removeAll()
         session.activeConversationID = nil
         session.isConversationInProgress = false
+        session.inFlightActivity = .none
         publishSession()
     }
 
@@ -79,6 +81,7 @@ final class ConversationCoordinator {
 
         cancelTask()
         session.isConversationInProgress = false
+        session.inFlightActivity = .none
         publishSession()
         setError(nil)
         syncPanel()
@@ -87,7 +90,8 @@ final class ConversationCoordinator {
     func send(
         draft: String,
         configuration: ConversationConfiguration,
-        obsidianConfiguration: ObsidianExportConfiguration,
+        saveExportConfiguration: SaveExportConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -105,20 +109,34 @@ final class ConversationCoordinator {
             return
         }
 
-        if let noteCommand = NoteCommand.parse(from: trimmedDraft) {
-            sendObsidianNote(
-                noteCommand: noteCommand,
-                draft: trimmedDraft,
-                configuration: configuration,
-                obsidianConfiguration: obsidianConfiguration,
-                screenshots: screenshots,
-                selectedTextContexts: selectedTextContexts,
-                browserPageContexts: browserPageContexts,
-                setStatus: setStatus,
-                setError: setError,
-                syncPanel: syncPanel,
-                onDebugLog: onDebugLog
-            )
+        if let parsedCommand = ComposerCommandRegistry.parse(from: trimmedDraft) {
+            switch parsedCommand {
+            case .save:
+                sendSaveExport(
+                    draft: trimmedDraft,
+                    saveExportConfiguration: saveExportConfiguration,
+                    screenshots: screenshots,
+                    selectedTextContexts: selectedTextContexts,
+                    browserPageContexts: browserPageContexts,
+                    setStatus: setStatus,
+                    setError: setError,
+                    syncPanel: syncPanel
+                )
+            case let .mark(markCommand):
+                sendMarkExport(
+                    markCommand: markCommand,
+                    draft: trimmedDraft,
+                    configuration: configuration,
+                    markExportConfiguration: markExportConfiguration,
+                    screenshots: screenshots,
+                    selectedTextContexts: selectedTextContexts,
+                    browserPageContexts: browserPageContexts,
+                    setStatus: setStatus,
+                    setError: setError,
+                    syncPanel: syncPanel,
+                    onDebugLog: onDebugLog
+                )
+            }
             return
         }
 
@@ -152,11 +170,10 @@ final class ConversationCoordinator {
             attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
-        let requestMessages = ConversationContextMessages.build(
+        let requestMessages = ConversationContextMessages.buildRequestMessages(
             sessionMessages: session.messages,
-            selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
-        ) + session.messages + [userMessage]
+            pendingUserMessage: userMessage
+        )
         let streamingAssistantMessageID = UUID()
 
         session.messages.append(userMessage)
@@ -264,11 +281,108 @@ final class ConversationCoordinator {
         }
     }
 
-    private func sendObsidianNote(
-        noteCommand: NoteCommand.Parsed,
+    private func sendSaveExport(
+        draft: String,
+        saveExportConfiguration: SaveExportConfiguration,
+        screenshots: [CapturedScreenshot],
+        selectedTextContexts: [AttachedTextContext],
+        browserPageContexts: [BrowserPageContext],
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void
+    ) {
+        let enabledMessage = "Enable \"Save with /save\" in Settings → Commands."
+        if let validationError = saveExportConfiguration.validationError(enabledMessage: enabledMessage) {
+            setError(validationError)
+            setStatus("Save command is disabled.")
+            return
+        }
+
+        guard SaveCommand.hasExportableContent(
+            sessionMessages: session.messages,
+            screenshotCount: screenshots.count,
+            selectedTextContextCount: selectedTextContexts.count,
+            browserPageContextCount: browserPageContexts.count
+        ) else {
+            setError("Send a message or attach context before using /save.")
+            setStatus("Nothing to save yet.")
+            return
+        }
+
+        let contextLabels = attachedContextLabels(
+            screenshots: screenshots,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
+
+        let conversationID = ensureActiveConversationID()
+        let userMessageID = UUID()
+
+        let imageAttachments: [ConversationImageAttachmentReference]
+        do {
+            imageAttachments = try messageAttachmentStore.saveImages(
+                from: screenshots,
+                conversationID: conversationID,
+                messageID: userMessageID
+            )
+        } catch {
+            setError(error.localizedDescription)
+            return
+        }
+
+        let userMessage = ConversationMessageDTO(
+            id: userMessageID,
+            role: .user,
+            text: draft,
+            attachedContextLabels: contextLabels,
+            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
+            attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
+            imageAttachments: imageAttachments
+        )
+
+        session.messages.append(userMessage)
+        persistConversationSnapshot(conversationID: conversationID, setError: setError)
+        session.inFlightActivity = .exportingConversation
+        publishSession()
+        setError(nil)
+        syncPanel()
+
+        let existingConversation = session.savedConversations.first(where: { $0.id == conversationID })
+        let conversation = PersistedConversation(
+            id: conversationID,
+            title: conversationTitle(for: session.messages),
+            createdAt: existingConversation?.createdAt ?? Date(),
+            updatedAt: Date(),
+            messages: session.messages
+        )
+
+        if let destinationURL = ConversationExportPresenter.save(
+            conversation: conversation,
+            defaultDirectoryURL: saveExportConfiguration.defaultSaveFolderURL
+        ) {
+            session.messages.append(
+                ConversationMessageDTO(
+                    role: .assistant,
+                    text: ConversationJSONExportMessage.confirmationText(filePath: destinationURL.path)
+                )
+            )
+            persistConversationSnapshot(conversationID: conversationID, setError: setError)
+            publishSession()
+            setStatus("Exported conversation JSON.")
+        } else {
+            setStatus("Export cancelled.")
+        }
+
+        session.inFlightActivity = .none
+        publishSession()
+        syncPanel()
+    }
+
+    private func sendMarkExport(
+        markCommand: MarkCommand.Parsed,
         draft: String,
         configuration: ConversationConfiguration,
-        obsidianConfiguration: ObsidianExportConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -277,20 +391,25 @@ final class ConversationCoordinator {
         syncPanel: @escaping @MainActor () -> Void,
         onDebugLog: ((String) -> Void)? = nil
     ) {
-        if let validationError = obsidianConfiguration.validationError {
+        if let validationError = markExportConfiguration.validationError {
             setError(validationError)
-            setStatus("Obsidian note export is not configured.")
+            setStatus("Mark export is not configured.")
             return
         }
 
-        guard NoteCommand.hasExportableContent(
+        let contextualMessages = ConversationContextMessages.build(
             sessionMessages: session.messages,
-            screenshotCount: screenshots.count,
-            selectedTextContextCount: selectedTextContexts.count,
-            browserPageContextCount: browserPageContexts.count
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
+
+        guard MarkCommand.hasMarkablePage(
+            browserPageContexts: browserPageContexts,
+            contextualMessages: contextualMessages,
+            conversationMessages: session.messages
         ) else {
-            setError("Send a message or attach context before using /note.")
-            setStatus("Nothing to save to Obsidian yet.")
+            setError("Attach a web page before using /mark or //.")
+            setStatus("No page to mark yet.")
             return
         }
 
@@ -328,16 +447,12 @@ final class ConversationCoordinator {
         session.messages.append(userMessage)
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         session.isConversationInProgress = true
+        session.inFlightActivity = .generatingBookmark
         publishSession()
-        setStatus("Writing Obsidian note with \(configuration.providerDisplayName)...")
+        setStatus("Writing bookmark with \(configuration.providerDisplayName)...")
         setError(nil)
         syncPanel()
 
-        let contextualMessages = ConversationContextMessages.build(
-            sessionMessages: session.messages,
-            selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
-        )
         let conversationMessages = session.messages
 
         cancelTask()
@@ -345,16 +460,17 @@ final class ConversationCoordinator {
             defer {
                 conversationTask = nil
                 session.isConversationInProgress = false
+                session.inFlightActivity = .none
                 publishSession()
                 syncPanel()
             }
 
             do {
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
-                let result = try await obsidianNoteService.generateAndSave(
-                    userHint: noteCommand.userHint,
+                let result = try await markExportService.generateAndSave(
+                    userHint: markCommand.userHint,
                     configuration: configuration,
-                    obsidianConfiguration: obsidianConfiguration,
+                    markConfiguration: markExportConfiguration,
                     conversationMessages: conversationMessages,
                     contextualMessages: contextualMessages,
                     browserPageContexts: browserPageContexts,
@@ -370,16 +486,16 @@ final class ConversationCoordinator {
                 )
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
-                setStatus("Saved Obsidian note \"\(result.title)\".")
+                setStatus("Saved bookmark \"\(result.title)\".")
             } catch is CancellationError {
-                setStatus("Obsidian note export cancelled.")
+                setStatus("Mark export cancelled.")
             } catch {
                 let message = error.localizedDescription
                 session.messages.append(ConversationMessageDTO(role: .system, text: message))
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
                 setError(message)
-                setStatus("Obsidian note export failed.")
+                setStatus("Mark export failed.")
             }
         }
     }
@@ -610,7 +726,8 @@ final class ConversationCoordinator {
     ) -> String {
         var prompt = """
         You are Cue, a concise assistant helping the user reason about their context.
-        Use the attached context as the primary source when it is present.
+        System messages immediately before a user turn describe attachments for that turn (selected text, web pages, screenshots).
+        Use those attachments as the primary source when they are present, including for follow-up questions about earlier turns.
         Reply in 4-5 sentences maximum. Give the direct answer first.
         Bullet points are fine when listing steps or options — keep each bullet to one line.
         Do not use headers. Do not write summaries or conclusions. Do not pad the response.
@@ -713,20 +830,96 @@ final class ConversationCoordinator {
 }
 
 enum ConversationContextMessages {
+    /// Context for the live composer: interleave attachment system messages before each user turn
+    /// so follow-up questions still see earlier screenshots and selected text.
+    nonisolated static func buildRequestMessages(
+        sessionMessages: [ConversationMessageDTO],
+        pendingUserMessage: ConversationMessageDTO
+    ) -> [ConversationMessageDTO] {
+        var requestMessages: [ConversationMessageDTO] = []
+        var accumulator = ContextAccumulator()
+
+        for message in sessionMessages {
+            if message.role == .user {
+                accumulator.appendContext(for: message, into: &requestMessages)
+            }
+            requestMessages.append(message)
+        }
+
+        accumulator.appendContext(for: pendingUserMessage, into: &requestMessages)
+        requestMessages.append(pendingUserMessage)
+        return requestMessages
+    }
+
+    /// Batch context at the top (used by /mark and other flows that assemble messages separately).
     nonisolated static func build(
         sessionMessages: [ConversationMessageDTO],
         selectedTextContexts: [AttachedTextContext] = [],
         browserPageContexts: [BrowserPageContext] = []
     ) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
+        var accumulator = ContextAccumulator()
+
+        for message in sessionMessages where message.role == .user {
+            accumulator.appendContext(for: message, into: &messages)
+        }
+
+        for page in browserPageContexts.reversed() {
+            accumulator.appendBrowserPage(
+                url: page.url,
+                pageTitle: page.pageTitle,
+                browserName: page.browserName,
+                extractedText: page.extractedText,
+                into: &messages
+            )
+        }
+
+        for selectedTextContext in selectedTextContexts.reversed() {
+            accumulator.appendSelectedText(
+                text: selectedTextContext.text,
+                appName: selectedTextContext.appName,
+                into: &messages
+            )
+        }
+
+        return messages
+    }
+
+    private struct ContextAccumulator {
         var seenBrowserURLs = Set<String>()
         var seenSelectedTextKeys = Set<String>()
 
-        func appendBrowserPage(
+        mutating func appendContext(
+            for userMessage: ConversationMessageDTO,
+            into messages: inout [ConversationMessageDTO]
+        ) {
+            for page in userMessage.attachedBrowserPages {
+                appendBrowserPage(
+                    url: page.url,
+                    pageTitle: page.pageTitle,
+                    browserName: page.browserName,
+                    extractedText: page.extractedText,
+                    into: &messages
+                )
+            }
+
+            for selectedText in userMessage.attachedSelectedTexts {
+                appendSelectedText(
+                    text: selectedText.text,
+                    appName: selectedText.appName,
+                    into: &messages
+                )
+            }
+
+            appendScreenshotNotice(count: userMessage.imageAttachments.count, into: &messages)
+        }
+
+        mutating func appendBrowserPage(
             url: String,
             pageTitle: String,
             browserName: String,
-            extractedText: String
+            extractedText: String,
+            into messages: inout [ConversationMessageDTO]
         ) {
             guard seenBrowserURLs.insert(url).inserted else {
                 return
@@ -739,7 +932,11 @@ enum ConversationContextMessages {
             messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
         }
 
-        func appendSelectedText(text: String, appName: String?) {
+        mutating func appendSelectedText(
+            text: String,
+            appName: String?,
+            into messages: inout [ConversationMessageDTO]
+        ) {
             let key = "\(appName ?? "")\u{0}\(text)"
             guard seenSelectedTextKeys.insert(key).inserted else {
                 return
@@ -750,34 +947,23 @@ enum ConversationContextMessages {
             messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
         }
 
-        for message in sessionMessages where message.role == .user {
-            for page in message.attachedBrowserPages {
-                appendBrowserPage(
-                    url: page.url,
-                    pageTitle: page.pageTitle,
-                    browserName: page.browserName,
-                    extractedText: page.extractedText
+        mutating func appendScreenshotNotice(
+            count: Int,
+            into messages: inout [ConversationMessageDTO]
+        ) {
+            guard count > 0 else {
+                return
+            }
+
+            let noun = count == 1 ? "screenshot" : "screenshots"
+            messages.append(
+                ConversationMessageDTO(
+                    role: .system,
+                    text: """
+                    The user attached \(count) \(noun) to the following user message. Image data is included on that user turn—use it when answering questions about that attachment, including in later follow-ups.
+                    """
                 )
-            }
-
-            for selectedText in message.attachedSelectedTexts {
-                appendSelectedText(text: selectedText.text, appName: selectedText.appName)
-            }
-        }
-
-        for page in browserPageContexts.reversed() {
-            appendBrowserPage(
-                url: page.url,
-                pageTitle: page.pageTitle,
-                browserName: page.browserName,
-                extractedText: page.extractedText
             )
         }
-
-        for selectedTextContext in selectedTextContexts.reversed() {
-            appendSelectedText(text: selectedTextContext.text, appName: selectedTextContext.appName)
-        }
-
-        return messages
     }
 }

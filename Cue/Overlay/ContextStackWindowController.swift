@@ -189,6 +189,7 @@ final class ContextStackWindowController: NSWindowController {
         messages: [ConversationMessageDTO],
         isSending: Bool,
         canCancelSend: Bool,
+        inFlightActivity: ComposerInFlightActivity,
         conversationProvider: ConversationProvider,
         providerDisplayName: String,
         hasSavedConversations: Bool,
@@ -198,6 +199,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.messages = messages
         viewModel.isSending = isSending
         viewModel.canCancelSend = canCancelSend
+        viewModel.inFlightActivity = inFlightActivity
         viewModel.conversationProvider = conversationProvider
         viewModel.providerDisplayName = providerDisplayName
         viewModel.hasSavedConversations = hasSavedConversations
@@ -222,6 +224,7 @@ final class ContextStackWindowController: NSWindowController {
         viewModel.messages = []
         viewModel.isSending = false
         viewModel.canCancelSend = false
+        viewModel.inFlightActivity = .none
         viewModel.conversationProvider = .ollama
         viewModel.providerDisplayName = ""
         viewModel.supportsWebSearch = false

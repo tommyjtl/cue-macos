@@ -10,6 +10,7 @@ final class OverlayCoordinator {
         var messages: [ConversationMessageDTO] = []
         var isSending = false
         var canCancelSend = false
+        var inFlightActivity: ComposerInFlightActivity = .none
         var conversationProvider: ConversationProvider = .ollama
         var providerDisplayName = ""
         var hasSavedConversations = false
@@ -71,6 +72,7 @@ final class OverlayCoordinator {
             messages: snapshot.messages,
             isSending: snapshot.isSending,
             canCancelSend: snapshot.canCancelSend,
+            inFlightActivity: snapshot.inFlightActivity,
             conversationProvider: snapshot.conversationProvider,
             providerDisplayName: snapshot.providerDisplayName,
             hasSavedConversations: snapshot.hasSavedConversations,

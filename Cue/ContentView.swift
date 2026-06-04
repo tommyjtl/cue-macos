@@ -50,6 +50,8 @@ private struct WorkspaceDetailView: View {
             PermissionsSettingsView()
         case .general:
             GeneralSettingsView()
+        case .commands:
+            CommandsSettingsView()
         }
     }
 }
@@ -58,10 +60,10 @@ private struct GeneralSettingsView: View {
     var body: some View {
         SettingsDetailScaffold(title: "General") {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                StartupSettingsSection()
                 SoundEffectsSettingsSection()
                 ShortcutSettingsSection()
                 ConversationSettingsSection()
-                ObsidianSettingsSection()
             }
         }
     }
@@ -156,7 +158,12 @@ private struct ConversationHistoryView: View {
                 subtitle: selectedConversation == nil ? "Select a saved conversation to inspect it here." : selectedConversation?.updatedAt.formatted(date: .abbreviated, time: .shortened) ?? "",
                 messages: selectedConversation?.messages ?? [],
                 onExportJSON: selectedConversation.map { conversation in
-                    { ConversationExportPresenter.save(conversation: conversation) }
+                    {
+                        ConversationExportPresenter.save(
+                            conversation: conversation,
+                            defaultDirectoryURL: appState.saveExportConfiguration.defaultSaveFolderURL
+                        )
+                    }
                 }
             )
         }
@@ -218,7 +225,7 @@ private struct DebugWorkspaceView: View {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
                 SettingsPageHeader(
                     title: "Debug",
-                    subtitle: "Session log for errors and clipboard attach diagnostics."
+                    subtitle: "Session log including persistence health on launch (storage path, on-disk counts, Recents load)."
                 )
 
                 SettingsCard {
@@ -243,12 +250,13 @@ private struct DebugWorkspaceView: View {
                                     .font(.system(size: 13))
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text(debugConsoleText(from: appState.debugLogEntries))
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .textSelection(.enabled)
+                                SettingsReadOnlyTextView(
+                                    text: debugConsoleText(from: appState.debugLogEntries),
+                                    minHeight: 120
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                             }
                         }
-                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                         .padding(SettingsLayout.rowHorizontalPadding)
                         .padding(.bottom, SettingsLayout.rowVerticalPadding)
                         .background(SettingsLayout.insetBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -542,7 +550,7 @@ private struct AppSidebar: View {
     @Binding var selectedSection: AppModel.SidebarSection?
 
     private let primarySections: [AppModel.SidebarSection] = [.inbox, .recents]
-    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .general]
+    private let settingsSections: [AppModel.SidebarSection] = [.permissions, .general, .commands]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
