@@ -154,7 +154,17 @@ final class AppModel {
     }
 
     init() {
-        conversationStore = try? ConversationStore()
+        let openedConversationStore: ConversationStore?
+        let conversationStoreOpenError: String?
+        do {
+            openedConversationStore = try ConversationStore()
+            conversationStoreOpenError = nil
+        } catch {
+            openedConversationStore = nil
+            conversationStoreOpenError = error.localizedDescription
+        }
+
+        conversationStore = openedConversationStore
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
@@ -168,7 +178,11 @@ final class AppModel {
         conversationCoordinator = ConversationCoordinator(conversationStore: conversationStore) { [weak self] snapshot in
             self?.applyConversationSnapshot(snapshot)
         }
-        loadPersistedConversations()
+        let persistenceLoadError = loadPersistedConversations()
+        logPersistenceHealthOnLaunch(
+            storeOpenError: conversationStoreOpenError,
+            loadError: persistenceLoadError
+        )
     }
 
     func startBackgroundServicesIfNeeded() {
@@ -855,10 +869,29 @@ final class AppModel {
         )
     }
 
-    private func loadPersistedConversations() {
+    @discardableResult
+    private func loadPersistedConversations() -> String? {
+        var loadError: String?
         conversationCoordinator?.loadPersistedConversations(onError: { [weak self] message in
+            loadError = message
             self?.setCaptureErrorMessage(message, source: .persistence)
         })
+        return loadError
+    }
+
+    private func logPersistenceHealthOnLaunch(storeOpenError: String?, loadError: String?) {
+        let loadedMessageCount = savedConversations.reduce(0) { partial, conversation in
+            partial + conversation.messages.count
+        }
+        let lines = PersistenceHealthDiagnostics.launchReportLines(
+            context: PersistenceHealthDiagnostics.LaunchContext(
+                storeOpenError: storeOpenError,
+                loadedConversationCount: savedConversations.count,
+                loadedMessageCount: loadedMessageCount,
+                loadError: loadError
+            )
+        )
+        appendDebugLog(lines.joined(separator: "\n"), source: .persistence)
     }
 
     func clearDebugLog() {

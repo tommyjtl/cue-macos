@@ -219,7 +219,7 @@ private struct DebugWorkspaceView: View {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
                 SettingsPageHeader(
                     title: "Debug",
-                    subtitle: "Session log for errors and clipboard attach diagnostics."
+                    subtitle: "Session log including persistence health on launch (storage path, on-disk counts, Recents load)."
                 )
 
                 SettingsCard {
