@@ -157,7 +157,12 @@ private struct ConversationHistoryView: View {
                 subtitle: selectedConversation == nil ? "Select a saved conversation to inspect it here." : selectedConversation?.updatedAt.formatted(date: .abbreviated, time: .shortened) ?? "",
                 messages: selectedConversation?.messages ?? [],
                 onExportJSON: selectedConversation.map { conversation in
-                    { ConversationExportPresenter.save(conversation: conversation) }
+                    {
+                        ConversationExportPresenter.save(
+                            conversation: conversation,
+                            defaultDirectoryURL: appState.saveExportConfiguration.defaultSaveFolderURL
+                        )
+                    }
                 }
             )
         }

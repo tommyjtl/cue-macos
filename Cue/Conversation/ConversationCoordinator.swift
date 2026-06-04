@@ -8,10 +8,10 @@ final class ConversationCoordinator {
         var savedConversations: [PersistedConversation] = []
         var selectedSavedConversationID: UUID?
         var isConversationInProgress = false
+        var inFlightActivity: ComposerInFlightActivity = .none
     }
 
     private let conversationService: ConversationService
-    private let saveExportService: SaveExportService
     private let markExportService: MarkExportService
     private let conversationStore: ConversationStore?
     private let messageAttachmentStore: MessageAttachmentStore
@@ -22,14 +22,12 @@ final class ConversationCoordinator {
 
     init(
         conversationService: ConversationService? = nil,
-        saveExportService: SaveExportService? = nil,
         markExportService: MarkExportService? = nil,
         conversationStore: ConversationStore?,
         messageAttachmentStore: MessageAttachmentStore? = nil,
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
-        self.saveExportService = saveExportService ?? SaveExportService()
         self.markExportService = markExportService ?? MarkExportService()
         self.conversationStore = conversationStore
         self.messageAttachmentStore = messageAttachmentStore ?? MessageAttachmentStore()
@@ -58,6 +56,7 @@ final class ConversationCoordinator {
         session.messages.removeAll()
         session.activeConversationID = nil
         session.isConversationInProgress = false
+        session.inFlightActivity = .none
         publishSession()
     }
 
@@ -82,6 +81,7 @@ final class ConversationCoordinator {
 
         cancelTask()
         session.isConversationInProgress = false
+        session.inFlightActivity = .none
         publishSession()
         setError(nil)
         syncPanel()
@@ -111,19 +111,16 @@ final class ConversationCoordinator {
 
         if let parsedCommand = ComposerCommandRegistry.parse(from: trimmedDraft) {
             switch parsedCommand {
-            case let .save(saveCommand):
+            case .save:
                 sendSaveExport(
-                    saveCommand: saveCommand,
                     draft: trimmedDraft,
-                    configuration: configuration,
                     saveExportConfiguration: saveExportConfiguration,
                     screenshots: screenshots,
                     selectedTextContexts: selectedTextContexts,
                     browserPageContexts: browserPageContexts,
                     setStatus: setStatus,
                     setError: setError,
-                    syncPanel: syncPanel,
-                    onDebugLog: onDebugLog
+                    syncPanel: syncPanel
                 )
             case let .mark(markCommand):
                 sendMarkExport(
@@ -286,22 +283,19 @@ final class ConversationCoordinator {
     }
 
     private func sendSaveExport(
-        saveCommand: SaveCommand.Parsed,
         draft: String,
-        configuration: ConversationConfiguration,
         saveExportConfiguration: SaveExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
         setStatus: @escaping @MainActor (String) -> Void,
         setError: @escaping @MainActor (String?) -> Void,
-        syncPanel: @escaping @MainActor () -> Void,
-        onDebugLog: ((String) -> Void)? = nil
+        syncPanel: @escaping @MainActor () -> Void
     ) {
-        let enabledMessage = "Enable \"Save conversations with /save\" in Settings → Commands."
+        let enabledMessage = "Enable \"Save with /save\" in Settings → Commands."
         if let validationError = saveExportConfiguration.validationError(enabledMessage: enabledMessage) {
             setError(validationError)
-            setStatus("Save export is not configured.")
+            setStatus("Save command is disabled.")
             return
         }
 
@@ -349,61 +343,40 @@ final class ConversationCoordinator {
 
         session.messages.append(userMessage)
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
-        session.isConversationInProgress = true
+        session.inFlightActivity = .exportingConversation
         publishSession()
-        setStatus("Writing note with \(configuration.providerDisplayName)...")
         setError(nil)
         syncPanel()
 
-        let contextualMessages = ConversationContextMessages.build(
-            sessionMessages: session.messages,
-            selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
+        let existingConversation = session.savedConversations.first(where: { $0.id == conversationID })
+        let conversation = PersistedConversation(
+            id: conversationID,
+            title: conversationTitle(for: session.messages),
+            createdAt: existingConversation?.createdAt ?? Date(),
+            updatedAt: Date(),
+            messages: session.messages
         )
-        let conversationMessages = session.messages
 
-        cancelTask()
-        conversationTask = Task { @MainActor in
-            defer {
-                conversationTask = nil
-                session.isConversationInProgress = false
-                publishSession()
-                syncPanel()
-            }
-
-            do {
-                let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
-                let result = try await saveExportService.generateAndSave(
-                    userHint: saveCommand.userHint,
-                    configuration: configuration,
-                    saveConfiguration: saveExportConfiguration,
-                    conversationMessages: conversationMessages,
-                    contextualMessages: contextualMessages,
-                    browserPageContexts: browserPageContexts,
-                    messageAttachments: messageAttachments,
-                    onDebugLog: onDebugLog
+        if let destinationURL = ConversationExportPresenter.save(
+            conversation: conversation,
+            defaultDirectoryURL: saveExportConfiguration.defaultSaveFolderURL
+        ) {
+            session.messages.append(
+                ConversationMessageDTO(
+                    role: .assistant,
+                    text: ConversationJSONExportMessage.confirmationText(filePath: destinationURL.path)
                 )
-
-                session.messages.append(
-                    ConversationMessageDTO(
-                        role: .assistant,
-                        text: ObsidianSavedNoteMessage.confirmationText(filePath: result.fileURL.path)
-                    )
-                )
-                persistConversationSnapshot(conversationID: conversationID, setError: setError)
-                publishSession()
-                setStatus("Saved note \"\(result.title)\".")
-            } catch is CancellationError {
-                setStatus("Save export cancelled.")
-            } catch {
-                let message = error.localizedDescription
-                session.messages.append(ConversationMessageDTO(role: .system, text: message))
-                persistConversationSnapshot(conversationID: conversationID, setError: setError)
-                publishSession()
-                setError(message)
-                setStatus("Save export failed.")
-            }
+            )
+            persistConversationSnapshot(conversationID: conversationID, setError: setError)
+            publishSession()
+            setStatus("Exported conversation JSON.")
+        } else {
+            setStatus("Export cancelled.")
         }
+
+        session.inFlightActivity = .none
+        publishSession()
+        syncPanel()
     }
 
     private func sendMarkExport(
@@ -475,6 +448,7 @@ final class ConversationCoordinator {
         session.messages.append(userMessage)
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         session.isConversationInProgress = true
+        session.inFlightActivity = .generatingBookmark
         publishSession()
         setStatus("Writing bookmark with \(configuration.providerDisplayName)...")
         setError(nil)
@@ -487,6 +461,7 @@ final class ConversationCoordinator {
             defer {
                 conversationTask = nil
                 session.isConversationInProgress = false
+                session.inFlightActivity = .none
                 publishSession()
                 syncPanel()
             }

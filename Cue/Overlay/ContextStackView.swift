@@ -19,6 +19,7 @@ final class ContextPanelViewModel {
     var draftMessage = ""
     var isSending = false
     var canCancelSend = false
+    var inFlightActivity: ComposerInFlightActivity = .none
     var conversationProvider: ConversationProvider = .ollama
     var providerDisplayName = ""
     var composerFocusRequestID = UUID()
@@ -272,7 +273,9 @@ struct ContextStackView: View {
                                 ConversationMessageBubble(
                                     message: message,
                                     assistantDisplayName: assistantDisplayName,
-                                    rendersStreamingText: model.isSending && message.id == model.messages.last?.id
+                                    rendersStreamingText: model.isSending
+                                        && !model.inFlightActivity.showsStatusBox
+                                        && message.id == model.messages.last?.id
                                 )
                             }
 
@@ -296,7 +299,9 @@ struct ContextStackView: View {
                 .frame(maxHeight: .infinity)
             }
 
-            if model.isSending {
+            if model.inFlightActivity.showsStatusBox {
+                ComposerCommandStatusBox(activity: model.inFlightActivity)
+            } else if model.isSending {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
@@ -381,6 +386,40 @@ enum ContextPreviewItem: Identifiable {
         case let .browserPage(context):
             return context.createdAt
         }
+    }
+}
+
+private struct ComposerCommandStatusBox: View {
+    let activity: ComposerInFlightActivity
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ProgressView()
+                .controlSize(.regular)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(activity.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(activity.subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor).opacity(0.65),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -1131,19 +1170,20 @@ private struct ComposerTextField: NSViewRepresentable {
         }
 
         func applyText(_ value: String, to textView: NSTextView) {
-            guard textView.string != value else {
+            let normalizedValue = ComposerCommandTextNormalizer.normalizeComposerDraft(value)
+            guard textView.string != normalizedValue else {
                 return
             }
 
-            if value.isEmpty {
+            if normalizedValue.isEmpty {
                 textView.string = ""
                 textView.undoManager?.removeAllActions()
                 textView.scrollToBeginningOfDocument(nil)
                 updateVisibleLineCount(for: textView)
             } else if let font = textView.font {
-                applySlashCommandHighlighting(to: textView, text: value, font: font)
+                applySlashCommandHighlighting(to: textView, text: normalizedValue, font: font)
             } else {
-                textView.string = value
+                textView.string = normalizedValue
             }
 
             scrollView?.refreshTextViewLayout()
@@ -1180,15 +1220,42 @@ private struct ComposerTextField: NSViewRepresentable {
                 return
             }
 
-            let value = textView.string
-            text = value
+            let originalValue = textView.string
+            let selectedRange = textView.selectedRange()
+            let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(originalValue)
+
+            if normalization.didReplace {
+                isApplyingHighlight = true
+                text = normalization.text
+                if let font = textView.font {
+                    ComposerSlashCommandHighlighter.apply(
+                        to: textView,
+                        text: normalization.text,
+                        font: font
+                    )
+                } else {
+                    textView.string = normalization.text
+                }
+                let adjustedRange = ComposerCommandTextNormalizer.adjustedSelectedRange(
+                    originalRange: selectedRange,
+                    originalText: originalValue,
+                    normalizedText: normalization.text
+                )
+                textView.setSelectedRange(adjustedRange)
+                isApplyingHighlight = false
+                updateVisibleLineCount(for: textView)
+                scrollView?.refreshTextViewLayout()
+                return
+            }
+
+            text = originalValue
 
             guard let font = textView.font else {
                 scrollView?.refreshTextViewLayout()
                 return
             }
 
-            applySlashCommandHighlighting(to: textView, text: value, font: font)
+            applySlashCommandHighlighting(to: textView, text: originalValue, font: font)
         }
     }
 }

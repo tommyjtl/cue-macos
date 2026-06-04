@@ -4,21 +4,17 @@
 
 | Command | Aliases | Intent |
 |---------|---------|--------|
-| `/save` | `/note`, `/notes` | Structured summary of the conversation |
-| `/mark` | `//` | Bookmark the **oldest page** in the session |
+| `/save` | `/note`, `/notes` | Export the current conversation as JSON (same as Recents → Export JSON) |
+| `/mark` | `//` | Bookmark the **oldest page** in the session via LLM → markdown file |
 
 ## Settings
 
-**Settings → Commands** — separate enable toggles, export folders, and system prompts for Save and Mark.
+**Settings → Commands**
 
-Legacy Obsidian settings under General were moved here. Save settings migrate from `obsidian-export-configuration` UserDefaults.
+- **Save:** enable toggle; optional default folder for the save dialog only.
+- **Mark:** enable toggle, export folder, system prompt.
 
-## Export layout
+## Export behavior
 
-- **Save:** `{saveFolder}/{yyyy-MM-dd}/{title}.md` — all session URLs in `## References` (unchanged).
-- **Mark:** `{markFolder}/{yyyy-MM-dd}/{title}--{domain}.md` — primary page only; no multi-URL References section. `## Why I saved this` and `## My angle` are omitted unless hint or conversation provides real content (lean `## What stood out` otherwise).
-
-## Implementation
-
-- `ComposerCommandRegistry` — parse and composer highlighting
-- `SaveExportService` / `MarkExportService` — LLM + `ObsidianNoteWriter` with `ExportKind`
+- **Save:** `NSSavePanel` → `ConversationExport.encode` (no LLM).
+- **Mark:** `{markFolder}/{yyyy-MM-dd}/{title}--{domain}.md` via LLM.

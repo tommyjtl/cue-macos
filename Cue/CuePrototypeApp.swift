@@ -135,6 +135,7 @@ final class AppModel {
     var selectedSavedConversationID: UUID?
     var isCaptureInProgress = false
     var isConversationInProgress = false
+    var composerInFlightActivity: ComposerInFlightActivity = .none
     var isContextOverlayVisible = false
     var isContextOverlayInChatMode = false
     /// True while the user is in an overlay-driven conversation flow (started from context or resumed after collecting more context).
@@ -580,21 +581,13 @@ final class AppModel {
         syncOverlayState()
     }
 
-    func resetSaveExportSystemPrompt() {
-        var configuration = saveExportConfiguration
-        configuration.systemPrompt = SaveExportPrompts.defaultBase
-        updateSaveExportConfiguration(configuration)
-    }
-
     func resetMarkExportSystemPrompt() {
         var configuration = markExportConfiguration
         configuration.systemPrompt = MarkExportPrompts.defaultBase
         updateMarkExportConfiguration(configuration)
     }
 
-    func resetObsidianNoteSystemPrompt() {
-        resetSaveExportSystemPrompt()
-    }
+    func resetObsidianNoteSystemPrompt() {}
 
     func updateSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
         saveExportConfiguration = configuration
@@ -860,6 +853,7 @@ final class AppModel {
                 messages: conversationMessages,
                 isSending: isConversationInProgress,
                 canCancelSend: isConversationInProgress,
+                inFlightActivity: composerInFlightActivity,
                 conversationProvider: conversationConfiguration.provider,
                 providerDisplayName: conversationConfiguration.providerDisplayName,
                 hasSavedConversations: !savedConversations.isEmpty,
@@ -939,6 +933,7 @@ final class AppModel {
         savedConversations = snapshot.savedConversations
         selectedSavedConversationID = snapshot.selectedSavedConversationID
         isConversationInProgress = snapshot.isConversationInProgress
+        composerInFlightActivity = snapshot.inFlightActivity
         syncOverlayState()
     }
 

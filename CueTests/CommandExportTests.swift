@@ -64,6 +64,14 @@ struct CommandExportTests {
 
     // MARK: - Mark command
 
+    @Test func composerNormalizesLeadingDoubleSlashToMark() {
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("//") == "/mark")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("// startup") == "/mark startup")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("//startup") == "/mark startup")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("/mark") == "/mark")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("say // later") == "say // later")
+    }
+
     @Test func markCommandMatchesBareKeyword() {
         #expect(MarkCommand.parse(from: "/mark")?.userHint == "")
         #expect(MarkCommand.parse(from: "//")?.userHint == "")
@@ -242,19 +250,21 @@ struct CommandExportTests {
         #expect(ObsidianSavedNoteMessage.savedNoteFileURL(from: message)?.path == path)
     }
 
-    @Test func exportConfigurationValidation() throws {
-        let rootDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cue-config-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: rootDirectory) }
-
-        let disabledSave = SaveExportConfiguration(isEnabled: false, exportFolderPath: rootDirectory.path)
+    @Test func saveConfigurationOnlyRequiresEnabledToggle() {
+        let disabledSave = SaveExportConfiguration(isEnabled: false)
         #expect(
             disabledSave.validationError(enabledMessage: "Enable save.") == "Enable save."
         )
 
-        let enabledSave = SaveExportConfiguration(isEnabled: true, exportFolderPath: rootDirectory.path)
+        let enabledSave = SaveExportConfiguration(isEnabled: true)
         #expect(enabledSave.validationError(enabledMessage: "Enable save.") == nil)
+    }
+
+    @Test func markConfigurationRequiresExportFolder() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cue-mark-config-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
 
         let disabledMark = MarkExportConfiguration(isEnabled: false, exportFolderPath: rootDirectory.path)
         #expect(disabledMark.validationError != nil)

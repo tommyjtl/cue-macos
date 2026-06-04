@@ -116,22 +116,29 @@ enum ConversationExport {
 
 @MainActor
 enum ConversationExportPresenter {
-    static func save(conversation: PersistedConversation) {
+    @discardableResult
+    static func save(
+        conversation: PersistedConversation,
+        defaultDirectoryURL: URL? = nil
+    ) -> URL? {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = sanitizedFilename(for: conversation.title)
+        panel.directoryURL = defaultDirectoryURL
 
         guard panel.runModal() == .OK, let destinationURL = panel.url else {
-            return
+            return nil
         }
 
         do {
             let data = try ConversationExport.encode(conversation)
             try data.write(to: destinationURL, options: .atomic)
+            return destinationURL
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
+            return nil
         }
     }
 

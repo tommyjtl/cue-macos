@@ -16,10 +16,6 @@ struct CommandsSettingsView: View {
 
 private struct SaveExportSettingsSection: View {
     @Environment(AppModel.self) private var appState
-    @State private var systemPromptDraft = SaveExportPrompts.defaultBase
-    @State private var didLoadPromptDraft = false
-    @State private var promptResetGeneration = 0
-    @State private var persistPromptTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -28,93 +24,53 @@ private struct SaveExportSettingsSection: View {
             SettingsCard {
                 SettingsToggleRow(
                     title: "Save with /save",
-                    subtitle: "Type /save in the overlay composer (or /note) to write a structured markdown note.",
+                    subtitle: "Type /save in the overlay composer (or /note) to export the conversation as JSON.",
                     isOn: appState.saveExportConfigurationBinding(for: \.isEnabled)
                 )
 
                 if appState.saveExportConfiguration.isEnabled {
-                    exportFolderSection(
-                        configuration: appState.saveExportConfiguration,
-                        pathPattern: "Notes are saved to {folder}/{yyyy-MM-dd}/{title}.md",
-                        panelMessage: "Choose the folder where Cue should write saved conversation notes."
+                    SettingsRowDivider()
+
+                    SettingsRow(
+                        title: "Default save location",
+                        subtitle: defaultSaveLocationSubtitle
                     ) {
-                        chooseExportFolder()
+                        SettingsChangeButton("Choose…") {
+                            chooseDefaultSaveFolder()
+                        }
                     }
 
-                    systemPromptSection(
-                        draft: $systemPromptDraft,
-                        resetGeneration: promptResetGeneration,
-                        isDefault: isUsingDefaultPrompt,
-                        onReset: resetPromptToPreset,
-                        onDraftChange: schedulePersistPrompt
-                    )
+                    if let previewPath = appState.saveExportConfiguration.defaultSaveFolderURL?.path {
+                        CommandExportFolderPathRow(
+                            path: previewPath,
+                            pathPattern: "Opens the save dialog here when you use /save (optional)."
+                        )
+                    }
                 }
             }
 
             if appState.saveExportConfiguration.isEnabled {
-                SettingsFootnote("Use /save, /note, or /notes in chat. Add a hint after the command to emphasize topics.")
+                SettingsFootnote("Same JSON export as Recents → Export JSON. You pick the file each time in the save dialog.")
             }
         }
-        .onAppear { loadPromptDraftIfNeeded() }
-        .onChange(of: appState.saveExportConfiguration.systemPrompt) { _, newValue in
-            if systemPromptDraft != newValue {
-                systemPromptDraft = newValue
-            }
+    }
+
+    private var defaultSaveLocationSubtitle: String {
+        if appState.saveExportConfiguration.defaultSaveFolderURL == nil {
+            return "Optional folder shown first in the save dialog."
         }
-        .onDisappear {
-            persistPromptTask?.cancel()
-            persistPromptIfNeeded(systemPromptDraft)
-        }
+
+        return "The save dialog opens in this folder by default."
     }
 
-    private var isUsingDefaultPrompt: Bool {
-        SaveExportPrompts.isUsingDefaultPrompt(
-            SaveExportConfiguration(
-                isEnabled: appState.saveExportConfiguration.isEnabled,
-                exportFolderPath: appState.saveExportConfiguration.exportFolderPath,
-                systemPrompt: systemPromptDraft
-            )
-        )
-    }
-
-    private func loadPromptDraftIfNeeded() {
-        guard !didLoadPromptDraft else { return }
-        systemPromptDraft = appState.saveExportConfiguration.systemPrompt
-        didLoadPromptDraft = true
-    }
-
-    private func resetPromptToPreset() {
-        persistPromptTask?.cancel()
-        systemPromptDraft = SaveExportPrompts.defaultBase
-        promptResetGeneration += 1
-        appState.resetSaveExportSystemPrompt()
-    }
-
-    private func schedulePersistPrompt(_ value: String) {
-        persistPromptTask?.cancel()
-        persistPromptTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            persistPromptIfNeeded(value)
-        }
-    }
-
-    private func persistPromptIfNeeded(_ value: String) {
-        var configuration = appState.saveExportConfiguration
-        guard configuration.systemPrompt != value else { return }
-        configuration.systemPrompt = value
-        appState.updateSaveExportConfiguration(configuration)
-    }
-
-    private func chooseExportFolder() {
+    private func chooseDefaultSaveFolder() {
         guard let url = runFolderPanel(
-            message: "Choose the folder where Cue should write saved conversation notes.",
-            currentFolder: appState.saveExportConfiguration.exportFolderURL
+            message: "Choose a default folder for conversation JSON exports.",
+            currentFolder: appState.saveExportConfiguration.defaultSaveFolderURL
         ) else { return }
 
         var configuration = appState.saveExportConfiguration
-        configuration.exportFolderPath = url.path
-        configuration.isEnabled = true
+        configuration.defaultSaveFolderPath = url.path
         appState.updateSaveExportConfiguration(configuration)
     }
 }
@@ -159,7 +115,7 @@ private struct MarkExportSettingsSection: View {
             }
 
             if appState.markExportConfiguration.isEnabled {
-                SettingsFootnote("Requires a web page in context. Use a hint after /mark or // (e.g. startup, blog, product).")
+                SettingsFootnote("Requires a web page in context. Type /mark or // at the start of the composer (// becomes /mark). Add a hint for your angle.")
             }
         }
         .onAppear { loadPromptDraftIfNeeded() }
@@ -227,19 +183,6 @@ private struct MarkExportSettingsSection: View {
 }
 
 // MARK: - Shared helpers
-
-private func exportFolderSection(
-    configuration: SaveExportConfiguration,
-    pathPattern: String,
-    panelMessage: String,
-    chooseAction: @escaping () -> Void
-) -> some View {
-    exportFolderSection(
-        folderURL: configuration.exportFolderURL,
-        pathPattern: pathPattern,
-        chooseAction: chooseAction
-    )
-}
 
 private func exportFolderSection(
     configuration: MarkExportConfiguration,
