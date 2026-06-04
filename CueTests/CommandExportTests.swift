@@ -147,6 +147,33 @@ struct CommandExportTests {
         #expect(reference?.url == "https://oldest.example/page")
     }
 
+    @Test func oldestPageReferenceUsesOldestPageOnContextStack() {
+        let oldest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1),
+            url: "https://oldest.example/page",
+            pageTitle: "Oldest Page",
+            extractedText: "",
+            browserName: "Safari"
+        )
+        let newest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 2),
+            url: "https://newest.example/page",
+            pageTitle: "Newest Page",
+            extractedText: "",
+            browserName: "Safari"
+        )
+
+        let reference = ConversationPageReferences.oldestPageReference(
+            browserPageContexts: [newest, oldest],
+            contextualMessages: [],
+            conversationMessages: []
+        )
+
+        #expect(reference?.url == "https://oldest.example/page")
+    }
+
     @Test func markCommandDetectsPageOnStackWhenNoMessages() {
         let page = BrowserPageContext(
             id: UUID(),

@@ -30,7 +30,8 @@ enum ConversationPageReferences {
             return reference
         }
 
-        if let page = browserPageContexts.first {
+        // Context stack inserts at index 0, so the tail is the oldest page.
+        if let page = browserPageContexts.last {
             return PageReference(
                 title: displayTitle(for: page.pageTitle, url: page.url),
                 url: page.url,
