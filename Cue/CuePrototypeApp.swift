@@ -277,7 +277,10 @@ final class AppModel {
                 self?.appendDebugLog(message, source: .clipboard)
             },
             shouldBypassAttachDetection: { [weak self] in
-                self?.overlayCoordinator?.isComposerInputFocused ?? false
+                if self?.overlayCoordinator?.isComposerInputFocused == true {
+                    return true
+                }
+                return MainWindowTextInputFocus.isEditingInSettingsWindow
             }
         )
     }
@@ -957,6 +960,18 @@ final class AppModel {
     }
 }
 
+/// Menu-bar apps use `.accessory` by default; the settings window needs `.regular` for text fields and copy/paste.
+enum MainWindowActivationPolicy {
+    static func applyForMainSettingsWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func restoreMenuBarAccessoryPolicy() {
+        NSApp.setActivationPolicy(.accessory)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var commandQMonitor: Any?
 
@@ -1024,8 +1039,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+enum MainWindowTextInputFocus {
+    static var isEditingInSettingsWindow: Bool {
+        guard let window = NSApp.keyWindow,
+              window.title == "Cue",
+              NSApp.isActive else {
+            return false
+        }
+
+        guard let responder = window.firstResponder else {
+            return false
+        }
+
+        return responder is NSTextView || responder is NSTextField
+    }
+}
+
+/// Routes standard edit shortcuts to SwiftUI text fields hosted in the settings window.
+private final class MainSettingsWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) {
+            return true
+        }
+
+        guard let firstResponder else {
+            return false
+        }
+
+        return ComposerEditShortcut.perform(with: event, sender: firstResponder)
+    }
+}
+
 @MainActor
 final class MainContentWindowController: NSWindowController, NSWindowDelegate {
+    private var editShortcutMonitor: Any?
+
     init(appModel: AppModel) {
         let hostingController = NSHostingController(
             rootView: ContentView()
@@ -1035,7 +1083,7 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
                     minHeight: SettingsLayout.MainWindow.minHeight
                 )
         )
-        let window = NSWindow(contentViewController: hostingController)
+        let window = MainSettingsWindow(contentViewController: hostingController)
 
         window.title = "Cue"
         window.setContentSize(
@@ -1056,6 +1104,13 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         clampWindowFrameIfNeeded()
+        installEditShortcutMonitor()
+    }
+
+    deinit {
+        if let editShortcutMonitor {
+            NSEvent.removeMonitor(editShortcutMonitor)
+        }
     }
 
     @available(*, unavailable)
@@ -1069,8 +1124,34 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
         }
 
         clampWindowFrameIfNeeded()
-        NSApp.activate(ignoringOtherApps: true)
+        MainWindowActivationPolicy.applyForMainSettingsWindow()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        MainWindowActivationPolicy.applyForMainSettingsWindow()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        MainWindowActivationPolicy.restoreMenuBarAccessoryPolicy()
+    }
+
+    private func installEditShortcutMonitor() {
+        editShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  window === NSApp.keyWindow,
+                  ComposerEditShortcut.selector(for: event) != nil else {
+                return event
+            }
+
+            let sender = window.firstResponder ?? window
+            if ComposerEditShortcut.perform(with: event, sender: sender) {
+                return nil
+            }
+
+            return event
+        }
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {

@@ -151,6 +151,39 @@ struct CuePrototypeTests {
         #expect(contextualMessages[1].text.contains("hello"))
     }
 
+    @Test func requestMessagesInterleaveContextBeforeEachUserTurn() {
+        let firstUser = ConversationMessageDTO(
+            role: .user,
+            text: "fix my grammar",
+            attachedSelectedTexts: [
+                AttachedSelectedTextReference(text: "Hi Shan", appName: "Vivaldi")
+            ],
+            imageAttachments: [
+                ConversationImageAttachmentReference(
+                    id: UUID(),
+                    mimeType: "image/png",
+                    relativePath: "conv/msg/shot.png"
+                )
+            ]
+        )
+        let assistant = ConversationMessageDTO(role: .assistant, text: "Try: I am responding.")
+        let pendingUser = ConversationMessageDTO(role: .user, text: "what was in my first attachment?")
+
+        let requestMessages = ConversationContextMessages.buildRequestMessages(
+            sessionMessages: [firstUser, assistant],
+            pendingUserMessage: pendingUser
+        )
+
+        #expect(requestMessages.count == 5)
+        #expect(requestMessages[0].role == .system)
+        #expect(requestMessages[0].text.contains("Hi Shan"))
+        #expect(requestMessages[1].role == .system)
+        #expect(requestMessages[1].text.contains("screenshot"))
+        #expect(requestMessages[2].id == firstUser.id)
+        #expect(requestMessages[3].id == assistant.id)
+        #expect(requestMessages[4].id == pendingUser.id)
+    }
+
     @Test func conversationContextMessagesDedupesOverlayAndHistoricalContext() {
         let browserPage = BrowserPageContext(
             id: UUID(),

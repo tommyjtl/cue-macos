@@ -249,12 +249,13 @@ private struct DebugWorkspaceView: View {
                                     .font(.system(size: 13))
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text(debugConsoleText(from: appState.debugLogEntries))
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .textSelection(.enabled)
+                                SettingsReadOnlyTextView(
+                                    text: debugConsoleText(from: appState.debugLogEntries),
+                                    minHeight: 120
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                             }
                         }
-                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                         .padding(SettingsLayout.rowHorizontalPadding)
                         .padding(.bottom, SettingsLayout.rowVerticalPadding)
                         .background(SettingsLayout.insetBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

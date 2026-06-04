@@ -170,11 +170,10 @@ final class ConversationCoordinator {
             attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
-        let requestMessages = ConversationContextMessages.build(
+        let requestMessages = ConversationContextMessages.buildRequestMessages(
             sessionMessages: session.messages,
-            selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
-        ) + session.messages + [userMessage]
+            pendingUserMessage: userMessage
+        )
         let streamingAssistantMessageID = UUID()
 
         session.messages.append(userMessage)
@@ -727,7 +726,8 @@ final class ConversationCoordinator {
     ) -> String {
         var prompt = """
         You are Cue, a concise assistant helping the user reason about their context.
-        Use the attached context as the primary source when it is present.
+        System messages immediately before a user turn describe attachments for that turn (selected text, web pages, screenshots).
+        Use those attachments as the primary source when they are present, including for follow-up questions about earlier turns.
         Reply in 4-5 sentences maximum. Give the direct answer first.
         Bullet points are fine when listing steps or options — keep each bullet to one line.
         Do not use headers. Do not write summaries or conclusions. Do not pad the response.
@@ -830,20 +830,96 @@ final class ConversationCoordinator {
 }
 
 enum ConversationContextMessages {
+    /// Context for the live composer: interleave attachment system messages before each user turn
+    /// so follow-up questions still see earlier screenshots and selected text.
+    nonisolated static func buildRequestMessages(
+        sessionMessages: [ConversationMessageDTO],
+        pendingUserMessage: ConversationMessageDTO
+    ) -> [ConversationMessageDTO] {
+        var requestMessages: [ConversationMessageDTO] = []
+        var accumulator = ContextAccumulator()
+
+        for message in sessionMessages {
+            if message.role == .user {
+                accumulator.appendContext(for: message, into: &requestMessages)
+            }
+            requestMessages.append(message)
+        }
+
+        accumulator.appendContext(for: pendingUserMessage, into: &requestMessages)
+        requestMessages.append(pendingUserMessage)
+        return requestMessages
+    }
+
+    /// Batch context at the top (used by /mark and other flows that assemble messages separately).
     nonisolated static func build(
         sessionMessages: [ConversationMessageDTO],
         selectedTextContexts: [AttachedTextContext] = [],
         browserPageContexts: [BrowserPageContext] = []
     ) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
+        var accumulator = ContextAccumulator()
+
+        for message in sessionMessages where message.role == .user {
+            accumulator.appendContext(for: message, into: &messages)
+        }
+
+        for page in browserPageContexts.reversed() {
+            accumulator.appendBrowserPage(
+                url: page.url,
+                pageTitle: page.pageTitle,
+                browserName: page.browserName,
+                extractedText: page.extractedText,
+                into: &messages
+            )
+        }
+
+        for selectedTextContext in selectedTextContexts.reversed() {
+            accumulator.appendSelectedText(
+                text: selectedTextContext.text,
+                appName: selectedTextContext.appName,
+                into: &messages
+            )
+        }
+
+        return messages
+    }
+
+    private struct ContextAccumulator {
         var seenBrowserURLs = Set<String>()
         var seenSelectedTextKeys = Set<String>()
 
-        func appendBrowserPage(
+        mutating func appendContext(
+            for userMessage: ConversationMessageDTO,
+            into messages: inout [ConversationMessageDTO]
+        ) {
+            for page in userMessage.attachedBrowserPages {
+                appendBrowserPage(
+                    url: page.url,
+                    pageTitle: page.pageTitle,
+                    browserName: page.browserName,
+                    extractedText: page.extractedText,
+                    into: &messages
+                )
+            }
+
+            for selectedText in userMessage.attachedSelectedTexts {
+                appendSelectedText(
+                    text: selectedText.text,
+                    appName: selectedText.appName,
+                    into: &messages
+                )
+            }
+
+            appendScreenshotNotice(count: userMessage.imageAttachments.count, into: &messages)
+        }
+
+        mutating func appendBrowserPage(
             url: String,
             pageTitle: String,
             browserName: String,
-            extractedText: String
+            extractedText: String,
+            into messages: inout [ConversationMessageDTO]
         ) {
             guard seenBrowserURLs.insert(url).inserted else {
                 return
@@ -856,7 +932,11 @@ enum ConversationContextMessages {
             messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
         }
 
-        func appendSelectedText(text: String, appName: String?) {
+        mutating func appendSelectedText(
+            text: String,
+            appName: String?,
+            into messages: inout [ConversationMessageDTO]
+        ) {
             let key = "\(appName ?? "")\u{0}\(text)"
             guard seenSelectedTextKeys.insert(key).inserted else {
                 return
@@ -867,34 +947,23 @@ enum ConversationContextMessages {
             messages.append(ConversationMessageDTO(role: .system, text: contextMessage))
         }
 
-        for message in sessionMessages where message.role == .user {
-            for page in message.attachedBrowserPages {
-                appendBrowserPage(
-                    url: page.url,
-                    pageTitle: page.pageTitle,
-                    browserName: page.browserName,
-                    extractedText: page.extractedText
+        mutating func appendScreenshotNotice(
+            count: Int,
+            into messages: inout [ConversationMessageDTO]
+        ) {
+            guard count > 0 else {
+                return
+            }
+
+            let noun = count == 1 ? "screenshot" : "screenshots"
+            messages.append(
+                ConversationMessageDTO(
+                    role: .system,
+                    text: """
+                    The user attached \(count) \(noun) to the following user message. Image data is included on that user turn—use it when answering questions about that attachment, including in later follow-ups.
+                    """
                 )
-            }
-
-            for selectedText in message.attachedSelectedTexts {
-                appendSelectedText(text: selectedText.text, appName: selectedText.appName)
-            }
-        }
-
-        for page in browserPageContexts.reversed() {
-            appendBrowserPage(
-                url: page.url,
-                pageTitle: page.pageTitle,
-                browserName: page.browserName,
-                extractedText: page.extractedText
             )
         }
-
-        for selectedTextContext in selectedTextContexts.reversed() {
-            appendSelectedText(text: selectedTextContext.text, appName: selectedTextContext.appName)
-        }
-
-        return messages
     }
 }
