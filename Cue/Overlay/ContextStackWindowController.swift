@@ -22,6 +22,7 @@ final class ContextStackWindowController: NSWindowController {
     private let onSetWebSearchEnabled: (Bool) -> Void
     private let onRemoveContextItem: (ContextPreviewItem) -> Void
     private let onPresentationChange: () -> Void
+    private let onInterceptDismissShortcut: () -> Bool
     private let panel: ContextStackPanel
     private let hostingView: NSHostingView<ContextStackView>
     private let viewModel: ContextPanelViewModel
@@ -50,7 +51,8 @@ final class ContextStackWindowController: NSWindowController {
         onLoadMostRecent: @escaping () -> Void,
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
-        onPresentationChange: @escaping () -> Void
+        onPresentationChange: @escaping () -> Void,
+        onInterceptDismissShortcut: @escaping () -> Bool = { false }
     ) {
         let normalizedDismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
         self.dismissChatShortcut = normalizedDismissChatShortcut
@@ -63,6 +65,7 @@ final class ContextStackWindowController: NSWindowController {
         self.onSetWebSearchEnabled = onSetWebSearchEnabled
         self.onRemoveContextItem = onRemoveContextItem
         self.onPresentationChange = onPresentationChange
+        self.onInterceptDismissShortcut = onInterceptDismissShortcut
         let viewModel = ContextPanelViewModel()
         self.viewModel = viewModel
         let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in }, onEscape: {})
@@ -543,6 +546,11 @@ final class ContextStackWindowController: NSWindowController {
 
     private func handleDismissChatShortcutPress() {
         guard dismissShortcutPressTracker.registerPress(shortcut: dismissChatShortcut) else {
+            return
+        }
+
+        if onInterceptDismissShortcut() {
+            resetDismissShortcutPressTracking()
             return
         }
 

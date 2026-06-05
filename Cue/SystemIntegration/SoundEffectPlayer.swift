@@ -81,6 +81,8 @@ enum SoundEffectPlayer {
 enum AppPreferenceKeys {
     static let soundEffectsEnabledKey = "sound-effects-enabled"
     static let hideMainAppOnStartKey = "hide-main-app-on-start"
+    static let playSelectedTextInsteadOfAddingToContextKey = "play-selected-text-instead-of-adding-to-context"
+    static let selectedTextTTSLanguageKey = "selected-text-tts-language"
 
     static var soundEffectsEnabled: Bool {
         if UserDefaults.standard.object(forKey: soundEffectsEnabledKey) == nil {
@@ -92,5 +94,18 @@ enum AppPreferenceKeys {
 
     static var hideMainAppOnStart: Bool {
         UserDefaults.standard.bool(forKey: hideMainAppOnStartKey)
+    }
+
+    static var playSelectedTextInsteadOfAddingToContext: Bool {
+        UserDefaults.standard.bool(forKey: playSelectedTextInsteadOfAddingToContextKey)
+    }
+
+    static var selectedTextTTSLanguage: TTSSelectedTextLanguage {
+        guard let rawValue = UserDefaults.standard.string(forKey: selectedTextTTSLanguageKey),
+              let language = TTSSelectedTextLanguage(rawValue: rawValue) else {
+            return .english
+        }
+
+        return language
     }
 }

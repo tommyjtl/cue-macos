@@ -3,27 +3,35 @@ import Foundation
 
 enum OverlayPlacement {
     private enum Layout {
-        static let cursorOffset: CGFloat = 0
+        static let defaultCursorOffset: CGFloat = 0
         static let screenEdgeInset: CGFloat = 12
     }
 
-    static func clampedOrigin(for size: NSSize, near point: NSPoint) -> NSPoint {
+    /// Offset between the cursor hot spot and the panel edge, in screen points.
+    static let contextStackCursorOffset: CGFloat = 0
+    static let ttsToastCursorOffset: CGFloat = 20
+
+    static func clampedOrigin(
+        for size: NSSize,
+        near point: NSPoint,
+        cursorOffset: CGFloat = Layout.defaultCursorOffset
+    ) -> NSPoint {
         let placementFrame = ScreenLocator.target(containing: point)?.placementFrame
             ?? NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
 
-        let rightOriginX = point.x + Layout.cursorOffset
-        let leftOriginX = point.x - size.width - Layout.cursorOffset
+        let rightOriginX = point.x + cursorOffset
+        let leftOriginX = point.x - size.width - cursorOffset
         let fitsOnRight = rightOriginX + size.width <= placementFrame.maxX - Layout.screenEdgeInset
 
         var origin = NSPoint(
             x: fitsOnRight ? rightOriginX : leftOriginX,
-            y: point.y - size.height - Layout.cursorOffset
+            y: point.y - size.height - cursorOffset
         )
 
         if origin.y < placementFrame.minY {
             origin.y = min(
-                point.y + Layout.cursorOffset,
+                point.y + cursorOffset,
                 placementFrame.maxY - size.height - Layout.screenEdgeInset
             )
         }
