@@ -105,6 +105,28 @@ enum ConversationPageReferences {
         )
     }
 
+    static func primaryPageHasExtractedText(
+        primaryPage: PageReference,
+        contextualMessages: [ConversationMessageDTO]
+    ) -> Bool {
+        contextualMessages.contains { message in
+            guard message.role == .system,
+                  message.text.hasPrefix("Web page context from "),
+                  message.text.contains(primaryPage.url) else {
+                return false
+            }
+
+            let sections = message.text.components(separatedBy: "\n\n")
+            guard sections.count > 1 else {
+                return false
+            }
+
+            return !sections.dropFirst().joined(separator: "\n\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+        }
+    }
+
     static func primaryPageContextMessage(for reference: PageReference) -> ConversationMessageDTO {
         ConversationMessageDTO(
             role: .system,

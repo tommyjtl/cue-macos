@@ -1,7 +1,7 @@
 import Foundation
 
 enum SaveCommand {
-    static let keywords = ["/save", "/notes", "/note"]
+    static let keywords = ["/save"]
 
     struct Parsed: Equatable {
         let matchedKeyword: String
@@ -64,30 +64,5 @@ enum SaveCommand {
 
         let nextIndex = text.index(text.startIndex, offsetBy: keyword.count)
         return text[nextIndex].isWhitespace
-    }
-}
-
-/// Legacy name for save command parsing.
-enum NoteCommand {
-    static func parse(from draft: String) -> SaveCommand.Parsed? {
-        SaveCommand.parse(from: draft)
-    }
-
-    static func hasExportableContent(
-        sessionMessages: [ConversationMessageDTO],
-        screenshotCount: Int,
-        selectedTextContextCount: Int,
-        browserPageContextCount: Int
-    ) -> Bool {
-        SaveCommand.hasExportableContent(
-            sessionMessages: sessionMessages,
-            screenshotCount: screenshotCount,
-            selectedTextContextCount: selectedTextContextCount,
-            browserPageContextCount: browserPageContextCount
-        )
-    }
-
-    static func leadingKeywordRange(in text: String) -> Range<String.Index>? {
-        SaveCommand.leadingKeywordRange(in: text)
     }
 }

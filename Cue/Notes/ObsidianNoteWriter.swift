@@ -33,6 +33,7 @@ struct ObsidianNoteWriter {
         let createdAt: Date
         let exportFolderURL: URL
         let exportKind: ExportKind
+        let tags: [String]?
 
         init(
             title: String,
@@ -41,7 +42,8 @@ struct ObsidianNoteWriter {
             references: [Reference],
             createdAt: Date,
             exportFolderURL: URL,
-            exportKind: ExportKind = .saveConversation
+            exportKind: ExportKind = .saveConversation,
+            tags: [String]? = nil
         ) {
             self.title = title
             self.body = body
@@ -50,6 +52,7 @@ struct ObsidianNoteWriter {
             self.createdAt = createdAt
             self.exportFolderURL = exportFolderURL
             self.exportKind = exportKind
+            self.tags = tags
         }
     }
 
@@ -89,7 +92,8 @@ struct ObsidianNoteWriter {
             sourceURL: input.sourceURL,
             references: input.references,
             createdAt: input.createdAt,
-            exportKind: input.exportKind
+            exportKind: input.exportKind,
+            tags: input.tags
         )
 
         do {
@@ -107,8 +111,8 @@ struct ObsidianNoteWriter {
             switch exportKind {
             case .saveConversation:
                 return "note.md"
-            case .markPage(let host):
-                return sanitizedMarkBaseName("mark", host: host) + ".md"
+            case .markPage:
+                return "mark.md"
             }
         }
 
@@ -117,33 +121,21 @@ struct ObsidianNoteWriter {
             switch exportKind {
             case .saveConversation:
                 return "note.md"
-            case .markPage(let host):
-                return sanitizedMarkBaseName("mark", host: host) + ".md"
+            case .markPage:
+                return "mark.md"
             }
         }
 
         switch exportKind {
         case .saveConversation:
             return "\(String(sanitized.prefix(120))).md"
-        case .markPage(let host):
-            let titlePart = String(sanitized.prefix(80))
-            return "\(sanitizedMarkBaseName(titlePart, host: host)).md"
+        case .markPage:
+            return "\(String(sanitized.prefix(80))).md"
         }
-    }
-
-    private static func sanitizedMarkBaseName(_ titlePart: String, host: String) -> String {
-        let hostPart = sanitizedTitleBase(from: host.isEmpty ? "page" : host)
-        if titlePart.isEmpty {
-            return hostPart.isEmpty ? "mark" : hostPart
-        }
-        if hostPart.isEmpty {
-            return titlePart
-        }
-        return "\(titlePart)--\(hostPart)"
     }
 
     private static func sanitizedTitleBase(from title: String) -> String {
-        let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|`")
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|`{}")
         let sanitizedScalars = title.unicodeScalars.map { scalar -> Character in
             if invalidCharacters.contains(scalar) {
                 return "-"
@@ -154,7 +146,7 @@ struct ObsidianNoteWriter {
         return String(sanitizedScalars)
             .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".- "))
     }
 
     private static func buildMarkdown(
@@ -163,21 +155,23 @@ struct ObsidianNoteWriter {
         sourceURL: String?,
         references: [Reference],
         createdAt: Date,
-        exportKind: ExportKind
+        exportKind: ExportKind,
+        tags: [String]?
     ) -> String {
-        let tags: String
+        let tagValues: [String]
         switch exportKind {
         case .saveConversation:
-            tags = "[cue, save]"
+            tagValues = tags ?? ["cue", "save"]
         case .markPage:
-            tags = "[cue, mark]"
+            tagValues = tags ?? [MarkExportTagVocabulary.systemTag]
         }
+        let tagsLine = "[\(tagValues.joined(separator: ", "))]"
 
         var frontmatterLines = [
             "---",
             "title: \"\(yamlEscaped(title))\"",
             "created: \(iso8601Formatter.string(from: createdAt))",
-            "tags: \(tags)"
+            "tags: \(tagsLine)"
         ]
 
         if let sourceURL, !sourceURL.isEmpty {

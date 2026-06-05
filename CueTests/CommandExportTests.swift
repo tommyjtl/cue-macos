@@ -8,23 +8,22 @@ struct CommandExportTests {
 
     @Test func saveCommandMatchesBareKeyword() {
         #expect(SaveCommand.parse(from: "/save")?.userHint == "")
-        #expect(SaveCommand.parse(from: "/note")?.userHint == "")
-        #expect(SaveCommand.parse(from: "  /note  ")?.userHint == "")
+        #expect(SaveCommand.parse(from: "  /save  ")?.userHint == "")
     }
 
     @Test func saveCommandMatchesWithHint() {
         #expect(SaveCommand.parse(from: "/save focus on localStorage pitfalls")?.userHint == "focus on localStorage pitfalls")
-        #expect(SaveCommand.parse(from: "/note focus on localStorage pitfalls")?.userHint == "focus on localStorage pitfalls")
     }
 
-    @Test func saveCommandMatchesNotesAlias() {
-        #expect(SaveCommand.parse(from: "/notes")?.userHint == "")
-        #expect(SaveCommand.parse(from: "/notes key naming")?.userHint == "key naming")
+    @Test func saveCommandRejectsLegacyNoteAliases() {
+        #expect(SaveCommand.parse(from: "/note") == nil)
+        #expect(SaveCommand.parse(from: "/notes") == nil)
+        #expect(SaveCommand.parse(from: "/note focus on localStorage pitfalls") == nil)
     }
 
     @Test func saveCommandRejectsPartialKeywordMatches() {
         #expect(SaveCommand.parse(from: "/notebook") == nil)
-        #expect(SaveCommand.parse(from: "please /note later") == nil)
+        #expect(SaveCommand.parse(from: "please /save later") == nil)
     }
 
     @Test func saveCommandRequiresConversationOrContextBeforeExport() {
@@ -57,7 +56,7 @@ struct CommandExportTests {
     }
 
     @Test func composerHighlightsLeadingKeywordRange() {
-        #expect(SaveCommand.leadingKeywordRange(in: "/note focus")?.lowerBound == "/note focus".startIndex)
+        #expect(SaveCommand.leadingKeywordRange(in: "/save focus")?.lowerBound == "/save focus".startIndex)
         #expect(MarkCommand.leadingKeywordRange(in: "// blog")?.lowerBound == "// blog".startIndex)
         #expect(ComposerCommandRegistry.leadingKeywordRange(in: "/notebook") == nil)
     }
@@ -85,6 +84,236 @@ struct CommandExportTests {
     @Test func markCommandRejectsPartialMatches() {
         #expect(MarkCommand.parse(from: "https://example.com") == nil)
         #expect(MarkCommand.parse(from: "say // later") == nil)
+    }
+
+    @Test func markGeneratedContentParserUsesFirstLineAsTitle() throws {
+        let response = """
+        Fallow — codebase intelligence for TypeScript
+        ## Highlights
+        - Useful for large JS repos
+        """
+
+        let parsed = try MarkGeneratedContentParser.parse(response)
+        #expect(parsed.title == "Fallow — codebase intelligence for TypeScript")
+        #expect(parsed.body.hasPrefix("## Highlights"))
+    }
+
+    @Test func markGeneratedContentParserIgnoresTagsLine() throws {
+        let parsed = try MarkGeneratedContentParser.parse("""
+        Adversarial Security Evaluation
+        Tags: article, research, reference
+        ## Highlights
+        - Field report on security testing
+        """)
+
+        #expect(parsed.title == "Adversarial Security Evaluation")
+        #expect(parsed.body.hasPrefix("## Highlights"))
+        #expect(!parsed.body.localizedCaseInsensitiveContains("Tags:"))
+    }
+
+    @Test func markWriterUsesCueTagInFrontmatter() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cue-mark-tags-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let writer = ObsidianNoteWriter()
+        let createdAt = ISO8601DateFormatter().date(from: "2026-06-05T02:24:18Z") ?? Date()
+        let result = try writer.write(
+            ObsidianNoteWriter.WriteInput(
+                title: "Security Field Report",
+                body: "## Highlights\n\n- Useful methodology",
+                sourceURL: "https://example.com/report",
+                references: [],
+                createdAt: createdAt,
+                exportFolderURL: rootDirectory,
+                exportKind: .markPage(host: "example.com")
+            )
+        )
+
+        let markdown = try String(contentsOf: result.fileURL, encoding: .utf8)
+        #expect(markdown.contains("tags: [cue]"))
+    }
+
+    @Test func markGeneratedContentParserStripsHeadingPrefixFromTitle() throws {
+        let parsed = try MarkGeneratedContentParser.parse("""
+        # Startup launch notes
+        ## Why I saved this
+        Comparing against Linear.
+        """)
+
+        #expect(parsed.title == "Startup launch notes")
+        #expect(parsed.body.contains("## Why I saved this"))
+    }
+
+    @Test func markGeneratedContentParserAcceptsJSONResponse() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            {"title":"Fallow - Codebase Intelligence for TypeScript & JavaScript","body":"## Highlights\\n\\n- Useful for large repos"}
+            """,
+            fallbackTitle: "Fallow"
+        )
+
+        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
+        #expect(parsed.body.hasPrefix("## Highlights"))
+    }
+
+    @Test func markGeneratedContentParserAcceptsLegacyDelimiterFormat() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            {-title-Fallow - Codebase Intelligence for TypeScript & JavaScript-,-body-## Highlights
+
+            - Field report
+            """,
+            fallbackTitle: "Fallow"
+        )
+
+        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
+        #expect(parsed.body.contains("## Highlights"))
+    }
+
+    @Test func markGeneratedContentParserFallsBackWhenFirstLineIsJSONBlob() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            {"title":"Broken","body":"## Highlights\\n- One"}
+            """,
+            fallbackTitle: "Page title from browser"
+        )
+
+        #expect(parsed.title == "Broken")
+    }
+
+    @Test func markWriterSanitizesBraceCharactersInFileName() {
+        #expect(
+            ObsidianNoteWriter.fileName(
+                from: "{title-Bad-,-body-##",
+                exportKind: .markPage(host: "example.com")
+            ) == "title-Bad-,-body-##.md"
+        )
+    }
+
+    @Test func markBodySanitizerEnsuresMinimumContentWhenBodyIsEmpty() {
+        let body = MarkExportBodySanitizer.ensureMinimumContent(
+            "",
+            primaryPage: ConversationPageReferences.PageReference(
+                title: "Augment – Buddy Bindery & Press",
+                url: "https://example.com/augment",
+                browserName: "Safari"
+            ),
+            userHint: ""
+        )
+
+        #expect(body.contains("## Highlights"))
+        #expect(body.contains("[Augment – Buddy Bindery & Press](https://example.com/augment)"))
+        #expect(body.contains("Saved from Cue for later reference."))
+    }
+
+    @Test func markBodySanitizerEnsuresMinimumContentIncludesHint() {
+        let body = MarkExportBodySanitizer.ensureMinimumContent(
+            "## Highlights",
+            primaryPage: ConversationPageReferences.PageReference(
+                title: "Example Article",
+                url: "https://example.com/article",
+                browserName: "Chrome"
+            ),
+            userHint: "incorporate the major purpose of this article"
+        )
+
+        #expect(body.contains("Bookmark focus: incorporate the major purpose of this article"))
+    }
+
+    @Test func markBodySanitizerPreservesSubstantiveModelBody() {
+        let original = """
+        ## Highlights
+
+        - Useful methodology for security testing
+        """
+
+        let body = MarkExportBodySanitizer.ensureMinimumContent(
+            original,
+            primaryPage: ConversationPageReferences.PageReference(
+                title: "Security Field Report",
+                url: "https://example.com/report",
+                browserName: "Safari"
+            ),
+            userHint: ""
+        )
+
+        #expect(body == original)
+    }
+
+    @Test func primaryPageHasExtractedTextDetectsThinContext() {
+        let reference = ConversationPageReferences.PageReference(
+            title: "Thin Page",
+            url: "https://example.com/thin",
+            browserName: "Safari"
+        )
+
+        let thinContext = [
+            ConversationMessageDTO(
+                role: .system,
+                text: "Web page context from Safari (https://example.com/thin):\nTitle: Thin Page"
+            )
+        ]
+        #expect(
+            ConversationPageReferences.primaryPageHasExtractedText(
+                primaryPage: reference,
+                contextualMessages: thinContext
+            ) == false
+        )
+
+        let richContext = [
+            ConversationMessageDTO(
+                role: .system,
+                text: """
+                Web page context from Safari (https://example.com/thin):
+                Title: Thin Page
+
+                This article explains how bindery workflows integrate with press operations.
+                """
+            )
+        ]
+        #expect(
+            ConversationPageReferences.primaryPageHasExtractedText(
+                primaryPage: reference,
+                contextualMessages: richContext
+            )
+        )
+    }
+
+    @Test func markBodySanitizerStripsPersonalSectionsForPageOnlyBookmark() {
+        let sanitized = MarkExportBodySanitizer.sanitizeForPageOnlyBookmark(
+            """
+            ## Highlights
+
+            - A forthcoming essay collection.
+
+            ## My notes
+
+            This is a call for thoughtful contributions.
+
+            ## Why I saved this
+
+            I want to revisit this later.
+            """
+        )
+
+        #expect(sanitized.contains("## Highlights"))
+        #expect(!sanitized.localizedCaseInsensitiveContains("## My notes"))
+        #expect(!sanitized.localizedCaseInsensitiveContains("## Why I saved this"))
+    }
+
+    @Test func markGeneratedContentParserStripsMarkdownFences() throws {
+        let parsed = try MarkGeneratedContentParser.parse("""
+        ```markdown
+        Page bookmark title
+        ## Highlights
+        - Item one
+        ```
+        """)
+
+        #expect(parsed.title == "Page bookmark title")
+        #expect(parsed.body.contains("Item one"))
     }
 
     @Test func oldestPageReferenceUsesFirstUserMessageAttachment() {
@@ -233,12 +462,12 @@ struct CommandExportTests {
         #expect(markdown.contains("## References"))
     }
 
-    @Test func markWriterUsesTitleAndHostFileName() {
+    @Test func markWriterUsesTitleOnlyFileName() {
         let fileName = ObsidianNoteWriter.fileName(
             from: "Supertonic ONNX",
             exportKind: .markPage(host: "github.com")
         )
-        #expect(fileName == "Supertonic ONNX--github.com.md")
+        #expect(fileName == "Supertonic ONNX.md")
     }
 
     @Test func noteWriterSanitizesFileNames() {
