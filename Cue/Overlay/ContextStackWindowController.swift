@@ -157,12 +157,21 @@ final class ContextStackWindowController: NSWindowController {
         stopFollowingCursor()
         applyPlacement(anchor: point)
 
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        activateChatComposerFocus()
         globalMonitorPanelIsVisible = true
-        requestComposerFocus()
         SoundEffectPlayer.play(.chatOpened)
         notifyPresentationChange()
+    }
+
+    func focusChatComposer() {
+        guard viewModel.mode == .chat, panel.isVisible else { return }
+        activateChatComposerFocus()
+    }
+
+    private func activateChatComposerFocus() {
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        requestComposerFocus()
     }
 
     private func presentStackPanelWithoutActivatingApp(revertingTo previousApp: NSRunningApplication?) {

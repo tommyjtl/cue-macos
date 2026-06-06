@@ -815,6 +815,7 @@ final class AppModel {
 
         if overlayCoordinator?.isInChatMode == true {
             overlayCoordinator?.relayout()
+            overlayCoordinator?.focusChatComposer()
             refreshOverlayPresentationState()
             return
         }
