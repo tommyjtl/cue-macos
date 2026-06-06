@@ -61,6 +61,10 @@ final class OverlayCoordinator {
         windowController.relayout()
     }
 
+    func focusChatComposer() {
+        windowController.focusChatComposer()
+    }
+
     func update(snapshot: Snapshot) {
         self.snapshot = snapshot
         windowController.updateContext(
