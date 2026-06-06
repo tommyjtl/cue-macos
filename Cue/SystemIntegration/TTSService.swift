@@ -6,13 +6,16 @@ final class TTSService {
     static let shared = TTSService()
 
     private var player: AVAudioPlayer?
+    private var playbackDelegate: TTSPlaybackDelegate?
+    private var playbackContinuation: CheckedContinuation<Void, Error>?
     private var speakTask: Task<Void, Never>?
     private(set) var isGenerating = false
+    private(set) var isSpeaking = false
 
     private init() {}
 
     var isActive: Bool {
-        isGenerating || player?.isPlaying == true
+        isGenerating || isSpeaking
     }
 
     func stop() {
@@ -25,6 +28,9 @@ final class TTSService {
     private func stopPlayback() {
         player?.stop()
         player = nil
+        playbackDelegate = nil
+        isSpeaking = false
+        resumePlaybackContinuation(with: .failure(CancellationError()))
     }
 
     func speak(
@@ -92,20 +98,7 @@ final class TTSService {
 
         try Task.checkCancellation()
 
-        stopPlayback()
-
-        do {
-            player = try AVAudioPlayer(data: data)
-        } catch {
-            throw TTSServiceError.invalidResponse
-        }
-
-        guard player?.play() == true else {
-            player = nil
-            throw TTSServiceError.invalidResponse
-        }
-
-        onPlaybackStarted?()
+        try await playUntilFinished(data: data, onPlaybackStarted: onPlaybackStarted)
     }
 
     func speakInBackground(
@@ -138,6 +131,85 @@ final class TTSService {
                 }
             }
         }
+    }
+
+    private func playUntilFinished(
+        data: Data,
+        onPlaybackStarted: (@MainActor () -> Void)?
+    ) async throws {
+        stopPlayback()
+
+        let delegate = TTSPlaybackDelegate()
+        playbackDelegate = delegate
+
+        let player: AVAudioPlayer
+        do {
+            player = try AVAudioPlayer(data: data)
+        } catch {
+            playbackDelegate = nil
+            throw TTSServiceError.invalidResponse
+        }
+
+        self.player = player
+        player.delegate = delegate
+
+        delegate.onFinish = { [weak self] successfully in
+            Task { @MainActor in
+                self?.handlePlaybackFinished(successfully: successfully)
+            }
+        }
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                playbackContinuation = continuation
+
+                guard player.play() else {
+                    playbackContinuation = nil
+                    isSpeaking = false
+                    continuation.resume(throwing: TTSServiceError.invalidResponse)
+                    return
+                }
+
+                isSpeaking = true
+                onPlaybackStarted?()
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.stopPlayback()
+            }
+        }
+    }
+
+    private func handlePlaybackFinished(successfully: Bool) {
+        player = nil
+        playbackDelegate = nil
+        isSpeaking = false
+
+        if successfully {
+            resumePlaybackContinuation(with: .success(()))
+        } else {
+            resumePlaybackContinuation(with: .failure(TTSServiceError.invalidResponse))
+        }
+    }
+
+    private func resumePlaybackContinuation(with result: Result<Void, Error>) {
+        guard let continuation = playbackContinuation else { return }
+        playbackContinuation = nil
+
+        switch result {
+        case .success:
+            continuation.resume()
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
+private final class TTSPlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+    var onFinish: ((Bool) -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onFinish?(flag)
     }
 }
 

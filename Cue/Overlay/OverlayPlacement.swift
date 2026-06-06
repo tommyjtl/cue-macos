@@ -10,6 +10,38 @@ enum OverlayPlacement {
     /// Offset between the cursor hot spot and the panel edge, in screen points.
     static let contextStackCursorOffset: CGFloat = 0
     static let ttsToastCursorOffset: CGFloat = 20
+    static let ttsActivityIndicatorOffset = NSSize(width: 10, height: 10)
+
+    static func clampedOriginTopTrailing(
+        for size: NSSize,
+        near point: NSPoint,
+        offset: NSSize = ttsActivityIndicatorOffset
+    ) -> NSPoint {
+        let placementFrame = ScreenLocator.target(containing: point)?.placementFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+
+        var origin = NSPoint(
+            x: point.x + offset.width,
+            y: point.y + offset.height
+        )
+
+        if origin.x + size.width > placementFrame.maxX - Layout.screenEdgeInset {
+            origin.x = point.x - size.width - offset.width
+        }
+
+        if origin.y + size.height > placementFrame.maxY - Layout.screenEdgeInset {
+            origin.y = point.y - size.height - offset.height
+        }
+
+        origin.x = max(origin.x, placementFrame.minX + Layout.screenEdgeInset)
+        origin.y = min(
+            max(origin.y, placementFrame.minY + Layout.screenEdgeInset),
+            placementFrame.maxY - size.height - Layout.screenEdgeInset
+        )
+
+        return origin
+    }
 
     static func clampedOrigin(
         for size: NSSize,

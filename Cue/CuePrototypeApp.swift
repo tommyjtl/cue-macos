@@ -105,6 +105,7 @@ final class AppModel {
     @ObservationIgnored private var permissionMonitor: PermissionMonitor?
     @ObservationIgnored private var clipboardMonitor: ClipboardMonitor?
     @ObservationIgnored private let ttsService = TTSService.shared
+    @ObservationIgnored private let ttsActivityIndicator = TTSActivityIndicatorController()
     @ObservationIgnored private let ttsStatusToast = TTSStatusToastController()
     @ObservationIgnored private var ttsDismissShortcutMonitor: TTSDismissShortcutMonitor?
     private var hasStartedBackgroundServices = false
@@ -325,32 +326,39 @@ final class AppModel {
         let sourceName = sourceApp?.localizedName ?? "unknown"
         print("[AppModel] Speaking clipboard text from \(sourceName) — \(ClipboardMonitor.describe(text))")
 
-        ttsStatusToast.showGenerating()
+        ttsActivityIndicator.showGenerating()
 
         ttsService.speakInBackground(
             text: text,
             configuration: TTSConfiguration(selectedTextLanguage: selectedTextTTSLanguage),
             onPlaybackStarted: { [weak self] in
-                self?.ttsStatusToast.hide()
+                self?.ttsActivityIndicator.showSpeaking()
+                self?.buildStatus = "Playing selected text (double ⌘C)."
+                self?.setCaptureErrorMessage(nil, source: .selectedText)
+            },
+            onSuccess: { [weak self] in
+                self?.ttsActivityIndicator.hide()
+                self?.buildStatus = "Finished reading selected text."
+                self?.setCaptureErrorMessage(nil, source: .selectedText)
+            },
+            onFailure: { [weak self] message in
+                self?.ttsActivityIndicator.hide()
+                let presentation = TTSStatusToastCopy.errorPresentation(for: message)
+                self?.ttsStatusToast.showError(title: presentation.title, subtitle: presentation.subtitle)
+                self?.buildStatus = presentation.subtitle ?? presentation.title
+                self?.setCaptureErrorMessage(message, source: .selectedText)
+                print("[AppModel] TTS playback failed — \(message)")
             }
-        ) { [weak self] in
-            self?.buildStatus = "Playing selected text (double ⌘C)."
-            self?.setCaptureErrorMessage(nil, source: .selectedText)
-        } onFailure: { [weak self] message in
-            let presentation = TTSStatusToastCopy.errorPresentation(for: message)
-            self?.ttsStatusToast.showError(title: presentation.title, subtitle: presentation.subtitle)
-            self?.buildStatus = presentation.subtitle ?? presentation.title
-            self?.setCaptureErrorMessage(message, source: .selectedText)
-            print("[AppModel] TTS playback failed — \(message)")
-        }
+        )
     }
 
     @discardableResult
     private func cancelActiveSelectedTextSpeechIfNeeded() -> Bool {
         guard playSelectedTextInsteadOfAddingToContext else { return false }
-        guard ttsService.isActive || ttsStatusToast.isVisible else { return false }
+        guard ttsService.isActive || ttsActivityIndicator.isVisible || ttsStatusToast.isVisible else { return false }
 
         ttsService.stop()
+        ttsActivityIndicator.hide()
         ttsStatusToast.hide()
         buildStatus = "Speech cancelled (double Escape)."
         setCaptureErrorMessage(nil, source: .selectedText)
@@ -375,7 +383,7 @@ final class AppModel {
                 shouldCancel: { [weak self] in
                     guard let self else { return false }
                     guard self.playSelectedTextInsteadOfAddingToContext else { return false }
-                    guard self.ttsService.isActive || self.ttsStatusToast.isVisible else { return false }
+                    guard self.ttsService.isActive || self.ttsActivityIndicator.isVisible || self.ttsStatusToast.isVisible else { return false }
                     guard self.overlayCoordinator?.isVisible != true else { return false }
                     return true
                 },
@@ -620,6 +628,7 @@ final class AppModel {
 
         if !isEnabled {
             ttsService.stop()
+            ttsActivityIndicator.hide()
             ttsStatusToast.hide()
         }
 
@@ -1466,7 +1475,7 @@ struct SelectedTextPlaybackSettingsSection: View {
             }
 
             SettingsFootnote(
-                "When on, double ⌘C reads copied text aloud through the local TTS backend instead of attaching it to context. Double Escape cancels generation or playback. Choose English, French, or German so Supertonic receives an explicit language code (`en`, `fr`, or `de`); Cue does not auto-detect language. Requires cue-tts-backend-experiment running on localhost:7788."
+                "When on, double ⌘C reads copied text aloud through the local TTS backend instead of attaching it to context. A small cursor badge shows while speech is generating and while it is playing; errors still appear as a toast. Double Escape cancels generation or playback. Choose English, French, or German so Supertonic receives an explicit language code (`en`, `fr`, or `de`); Cue does not auto-detect language. Requires cue-tts-backend-experiment running on localhost:7788."
             )
         }
     }

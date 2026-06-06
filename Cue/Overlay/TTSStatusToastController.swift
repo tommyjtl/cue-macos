@@ -6,12 +6,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class TTSStatusToastViewModel {
-    enum Kind: Equatable {
-        case generating
-        case error(title: String, subtitle: String?)
-    }
-
-    var kind: Kind = .generating
+    var title = ""
+    var subtitle: String?
 }
 
 struct TTSStatusToastView: View {
@@ -19,34 +15,24 @@ struct TTSStatusToastView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            switch model.kind {
-            case .generating:
-                ProgressView()
-                    .controlSize(.small)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
 
-                Text("Generating speech…")
-                    .font(.system(size: 13, weight: .medium))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.title)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
-            case .error(let title, let subtitle):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.orange)
-                    .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                if let subtitle = model.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -97,19 +83,14 @@ final class TTSStatusToastController {
         panel.contentView = hostingView
     }
 
-    func showGenerating(near point: NSPoint = NSEvent.mouseLocation) {
-        dismissTask?.cancel()
-        viewModel.kind = .generating
-        present(near: point)
-    }
-
     func showError(
         title: String,
         subtitle: String? = nil,
         near point: NSPoint = NSEvent.mouseLocation
     ) {
         dismissTask?.cancel()
-        viewModel.kind = .error(title: title, subtitle: subtitle)
+        viewModel.title = title
+        viewModel.subtitle = subtitle
         present(near: point)
 
         dismissTask = Task { @MainActor in
