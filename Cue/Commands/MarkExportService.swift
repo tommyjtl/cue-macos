@@ -62,6 +62,14 @@ struct MarkExportService {
             primaryPage: primaryPage,
             contextualMessages: contextualMessages
         )
+        let hasSelectedText = Self.hasSelectedText(in: contextualMessages)
+        let hasUsableContext = hasRichPageText || hasSelectedText
+        let defaultSynthesisInstruction = MarkExportDefaultSynthesisInstruction.resolve(
+            userHint: userHint,
+            hasConversation: hasConversation,
+            primaryPage: primaryPage,
+            contextualMessages: contextualMessages
+        )
         var requestMessages = contextualMessages + conversationMessages
         requestMessages.insert(
             ConversationPageReferences.primaryPageContextMessage(for: primaryPage),
@@ -74,7 +82,8 @@ struct MarkExportService {
                 userHint: userHint,
                 primaryPage: primaryPage,
                 hasConversation: hasConversation,
-                hasRichPageText: hasRichPageText
+                hasUsableContext: hasUsableContext,
+                defaultSynthesisInstruction: defaultSynthesisInstruction
             ),
             messages: requestMessages,
             messageAttachments: messageAttachments
@@ -87,11 +96,18 @@ struct MarkExportService {
             browserPageContexts: browserPageContexts,
             contextualMessages: contextualMessages,
             conversationMessages: conversationMessages,
+            hasUsableContext: hasUsableContext,
+            defaultSynthesisInstruction: defaultSynthesisInstruction,
             request: request,
             onDebugLog: onDebugLog
         )
 
         let response = try await conversationService.send(request: request, configuration: noteConfiguration)
+
+        CommandExportGenerationLogger.logMarkModelResponse(
+            responseText: response.message.text,
+            onDebugLog: onDebugLog
+        )
         var generatedContent = try MarkGeneratedContentParser.parse(
             response.message.text,
             fallbackTitle: primaryPage.title
@@ -144,7 +160,7 @@ struct MarkExportService {
         return result
     }
 
-    private static func hasSubstantiveConversation(_ messages: [ConversationMessageDTO]) -> Bool {
+    static func hasSubstantiveConversation(_ messages: [ConversationMessageDTO]) -> Bool {
         messages.contains { message in
             guard message.role == .user || message.role == .assistant else {
                 return false
@@ -163,12 +179,19 @@ struct MarkExportService {
         }
     }
 
+    private static func hasSelectedText(in contextualMessages: [ConversationMessageDTO]) -> Bool {
+        contextualMessages.contains { message in
+            message.role == .system && message.text.hasPrefix("Selected text from")
+        }
+    }
+
     private static func generationSystemPrompt(
         configuration: MarkExportConfiguration,
         userHint: String,
         primaryPage: ConversationPageReferences.PageReference,
         hasConversation: Bool,
-        hasRichPageText: Bool
+        hasUsableContext: Bool,
+        defaultSynthesisInstruction: MarkExportDefaultSynthesisInstruction.Result?
     ) -> String {
         var prompt = MarkExportPrompts.resolvedBasePrompt(from: configuration)
 
@@ -189,7 +212,7 @@ struct MarkExportService {
             """
         }
 
-        if !hasRichPageText {
+        if !hasUsableContext {
             prompt += """
 
             Limited page text was captured (mostly title and URL). Still write a non-empty ## Highlights section with at least 2 short bullets inferred cautiously from the title, URL, and any visible context—never leave the body empty.
@@ -202,6 +225,15 @@ struct MarkExportService {
             There is no user hint and no substantive conversation—only the /mark or // command and page context.
             Write ## Highlights only with substantive bullets or sentences. Do NOT include a lead paragraph, ## Why I saved this, or ## My notes. Do not infer why the user saved the page or state their opinion.
             """
+
+            if let defaultSynthesisInstruction {
+                prompt += """
+
+
+                Default synthesis task (user did not specify an angle; scenario: \(defaultSynthesisInstruction.scenario.rawValue)):
+                \(defaultSynthesisInstruction.instruction)
+                """
+            }
         } else if !hasUserHint {
             prompt += """
 

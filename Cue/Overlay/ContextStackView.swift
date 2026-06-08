@@ -406,6 +406,14 @@ private struct ComposerCommandStatusBox: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let scenarioLabel = activity.presetScenarioLabel,
+                   let presetHint = activity.presetHint {
+                    Text("Cue preset (\(scenarioLabel)): \(presetHint)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

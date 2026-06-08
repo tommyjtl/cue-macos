@@ -64,11 +64,28 @@ struct CommandExportTests {
     // MARK: - Mark command
 
     @Test func composerNormalizesLeadingDoubleSlashToMark() {
-        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("//") == "/mark")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("//") == "/mark ")
         #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("// startup") == "/mark startup")
         #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("//startup") == "/mark startup")
-        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("/mark") == "/mark")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("/mark") == "/mark ")
+        #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("/mark startup") == "/mark startup")
         #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("say // later") == "say // later")
+    }
+
+    @Test func composerAdjustedSelectedRangeAfterBareMarkExpansion() {
+        let bareDoubleSlashRange = ComposerCommandTextNormalizer.adjustedSelectedRange(
+            originalRange: NSRange(location: 2, length: 0),
+            originalText: "//",
+            normalizedText: "/mark "
+        )
+        #expect(bareDoubleSlashRange.location == 6)
+
+        let bareMarkRange = ComposerCommandTextNormalizer.adjustedSelectedRange(
+            originalRange: NSRange(location: 5, length: 0),
+            originalText: "/mark",
+            normalizedText: "/mark "
+        )
+        #expect(bareMarkRange.location == 6)
     }
 
     @Test func markCommandMatchesBareKeyword() {
@@ -527,5 +544,75 @@ struct CommandExportTests {
 
         let enabledMark = MarkExportConfiguration(isEnabled: true, exportFolderPath: rootDirectory.path)
         #expect(enabledMark.validationError == nil)
+    }
+
+    @Test func markDefaultSynthesisInstructionDetectsYouTubeURLs() {
+        #expect(MarkExportDefaultSynthesisInstruction.isYouTubeURL("https://www.youtube.com/watch?v=abc123"))
+        #expect(MarkExportDefaultSynthesisInstruction.isYouTubeURL("https://youtu.be/abc123"))
+        #expect(MarkExportDefaultSynthesisInstruction.isYouTubeURL("https://m.youtube.com/watch?v=abc123"))
+        #expect(!MarkExportDefaultSynthesisInstruction.isYouTubeURL("https://example.com/article"))
+    }
+
+    @Test func markDefaultSynthesisInstructionForYouTubeWithSelectedTextWithoutUserHint() {
+        let primaryPage = ConversationPageReferences.PageReference(
+            title: "RAG vs Agentic AI",
+            url: "https://www.youtube.com/watch?v=example",
+            browserName: "Chrome"
+        )
+        let contextualMessages = [
+            ConversationMessageDTO(
+                role: .system,
+                text: """
+                Selected text from Chrome:
+
+                Gemini summary covering how LLMs connect data for smarter AI.
+                """
+            )
+        ]
+
+        let result = MarkExportDefaultSynthesisInstruction.resolve(
+            userHint: "",
+            hasConversation: false,
+            primaryPage: primaryPage,
+            contextualMessages: contextualMessages
+        )
+
+        #expect(result?.scenario == .youtubeVideo)
+        #expect(result?.presetGeneratingContext.scenarioLabel == "YouTube video")
+        #expect(result?.presetGeneratingContext.hint.contains("at least 3 bullets") == true)
+    }
+
+    @Test func markDefaultSynthesisInstructionSkippedWhenUserHintPresent() {
+        let primaryPage = ConversationPageReferences.PageReference(
+            title: "RAG vs Agentic AI",
+            url: "https://www.youtube.com/watch?v=example",
+            browserName: "Chrome"
+        )
+
+        let result = MarkExportDefaultSynthesisInstruction.resolve(
+            userHint: "focus on how agents connect data",
+            hasConversation: false,
+            primaryPage: primaryPage,
+            contextualMessages: []
+        )
+
+        #expect(result == nil)
+    }
+
+    @Test func markDefaultSynthesisInstructionSkippedForNonYouTubePage() {
+        let primaryPage = ConversationPageReferences.PageReference(
+            title: "Example Article",
+            url: "https://example.com/article",
+            browserName: "Chrome"
+        )
+
+        let result = MarkExportDefaultSynthesisInstruction.resolve(
+            userHint: "",
+            hasConversation: false,
+            primaryPage: primaryPage,
+            contextualMessages: []
+        )
+
+        #expect(result == nil)
     }
 }
