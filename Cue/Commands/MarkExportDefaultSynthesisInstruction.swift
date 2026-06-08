@@ -73,14 +73,14 @@ enum MarkExportDefaultSynthesisInstruction {
     private static func youtubeVideoInstruction(hasSelectedText: Bool) -> String {
         if hasSelectedText {
             return """
-Summarize this YouTube video in ## Highlights with at least 3 bullets or a short paragraph covering the main topics and key takeaways. 
-Treat any attached selected notes or transcript text as primary source material—do not return only the video link.
+            Summarize this YouTube video in ## Highlights with at least 3 bullets or a short paragraph covering the main topics and key takeaways.
+            Treat any attached selected notes or transcript text as primary source material—do not return only the video link.
             """
         }
 
         return """
-Summarize this YouTube video in ## Highlights with at least 3 bullets or a short paragraph covering the main topics and 
-key takeaways from all attached context—do not return only the video link.
+        Summarize this YouTube video in ## Highlights with at least 3 bullets or a short paragraph covering the main topics and
+        key takeaways from all attached context—do not return only the video link.
         """
     }
 
