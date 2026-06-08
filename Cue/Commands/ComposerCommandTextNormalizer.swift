@@ -5,14 +5,19 @@ enum ComposerCommandTextNormalizer {
     private static let doubleSlashPrefix = "//"
 
     /// Replaces a leading `//` shortcut with `/mark`, preserving hint text after the shortcut.
+    /// Bare `//` or `/mark` expands to `/mark ` so the cursor can continue with an optional hint.
     static func normalizeComposerDraft(_ text: String) -> String {
+        if text == markKeyword {
+            return markKeyword + " "
+        }
+
         guard text.hasPrefix(doubleSlashPrefix) else {
             return text
         }
 
         let remainder = String(text.dropFirst(doubleSlashPrefix.count))
         if remainder.isEmpty {
-            return markKeyword
+            return markKeyword + " "
         }
 
         if remainder.first?.isWhitespace == true {
@@ -37,6 +42,10 @@ enum ComposerCommandTextNormalizer {
         originalText: String,
         normalizedText: String
     ) -> NSRange {
+        if originalText == markKeyword, normalizedText == markKeyword + " " {
+            return NSRange(location: (normalizedText as NSString).length, length: 0)
+        }
+
         guard originalText.hasPrefix(doubleSlashPrefix),
               normalizedText.hasPrefix(markKeyword) else {
             return originalRange
@@ -53,9 +62,23 @@ enum ComposerCommandTextNormalizer {
         if location > slashEndUTF16 {
             location += lengthDelta
         } else if location >= slashEndUTF16 {
-            location = (markKeyword as NSString).length
+            location = cursorLocationAfterExpandedMarkKeyword(in: normalizedText)
         }
 
         return NSRange(location: location, length: originalRange.length)
+    }
+
+    private static func cursorLocationAfterExpandedMarkKeyword(in normalizedText: String) -> Int {
+        let markKeywordUTF16Length = (markKeyword as NSString).length
+        guard normalizedText.hasPrefix(markKeyword) else {
+            return markKeywordUTF16Length
+        }
+
+        let afterKeyword = normalizedText.index(normalizedText.startIndex, offsetBy: markKeyword.count)
+        if afterKeyword < normalizedText.endIndex, normalizedText[afterKeyword].isWhitespace {
+            return markKeywordUTF16Length + 1
+        }
+
+        return (normalizedText as NSString).length
     }
 }

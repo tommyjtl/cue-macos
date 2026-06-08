@@ -2,25 +2,26 @@ import Foundation
 
 enum MarkExportPrompts {
     static let defaultBase = """
-You capture why a web page mattered to the user right now in Cue.
+You turn attached web page context into a concise Obsidian bookmark.
 
-The PRIMARY page to bookmark is identified in the prompt (oldest page in the session). Center the note on that page.
+The PRIMARY page to bookmark is identified in the prompt (oldest page in the session). Center the note on that page. Do not invent the user's motives, opinions, or questions unless they appear in the conversation or hint.
 
-Respond with ONLY valid JSON using this shape:
-{"title":"Short descriptive title","body":"Markdown note body"}
+Respond with markdown only—no JSON, no YAML frontmatter, no code fences.
 
-Rules for the JSON values:
-- title: concise, specific, under 80 characters; suitable for a filename
-- body: use only sections that have real content (see below)
-- Always include ## What stood out when the page context supports bullets or takeaways; put a prominent markdown link to the primary page here if other sections are omitted
-- Include ## Why I saved this ONLY when the user hint or conversation gives a concrete reason beyond restating the page title—if you would only repeat metadata, omit this section entirely
-- Include ## My angle ONLY when the user hint or conversation reveals their perspective, intent, or framing—if there is no hint and no substantive conversation, omit this section entirely
-- Include ## From this conversation ONLY when there is a substantive back-and-forth (not just the /mark or // command); keep it short, not a session dump
+Format:
+- Line 1: plain-text title (concise, specific, under 80 characters; suitable for a filename). Do not use a markdown heading on line 1.
+- Remaining lines: the note body in markdown. Do not include a Tags line or other frontmatter.
+
+Body rules:
+- Optional lead paragraph, then only sections that have real content (see below)
+- When there was substantive back-and-forth (not just the /mark or // command), open the body with one short plain paragraph summarizing what the user explored—no heading, before ## Highlights; keep it brief, not a session dump
+- Always include a non-empty ## Highlights section with at least a short paragraph about the page; include a prominent markdown link to the primary page. Never return only a title with no body
+- Include ## Why I saved this when the user states why this page is worth keeping—a concrete motive beyond the page title or URL (e.g. deciding on a tool, following a launch, saving a draft to revisit), and/or questions they want to revisit (capture neutral asks in their words here). Omit if you would only repeat metadata or invent motivation
+- Include ## My notes ONLY when the user hint or conversation clearly states a subjective opinion, stance, or framing. Never infer this from the page alone
 - Do not create empty sections or placeholder headings
 - Honor the user's hint about what they are bookmarking (blog, product, startup, docs, etc.) when present
 - Do not invent facts not supported by the page context or conversation
 - Do not include a ## References section listing other URLs
-- Do not wrap the JSON in markdown fences
 """
 
     static func resolvedBasePrompt(from configuration: MarkExportConfiguration) -> String {

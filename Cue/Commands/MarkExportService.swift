@@ -56,6 +56,20 @@ struct MarkExportService {
         }
 
         let noteConfiguration = configuration.forNoteGeneration
+        let hasUserHint = !userHint.isEmpty
+        let hasConversation = Self.hasSubstantiveConversation(conversationMessages)
+        let hasRichPageText = ConversationPageReferences.primaryPageHasExtractedText(
+            primaryPage: primaryPage,
+            contextualMessages: contextualMessages
+        )
+        let hasSelectedText = Self.hasSelectedText(in: contextualMessages)
+        let hasUsableContext = hasRichPageText || hasSelectedText
+        let defaultSynthesisInstruction = MarkExportDefaultSynthesisInstruction.resolve(
+            userHint: userHint,
+            hasConversation: hasConversation,
+            primaryPage: primaryPage,
+            contextualMessages: contextualMessages
+        )
         var requestMessages = contextualMessages + conversationMessages
         requestMessages.insert(
             ConversationPageReferences.primaryPageContextMessage(for: primaryPage),
@@ -67,7 +81,9 @@ struct MarkExportService {
                 configuration: markConfiguration,
                 userHint: userHint,
                 primaryPage: primaryPage,
-                hasConversation: Self.hasSubstantiveConversation(conversationMessages)
+                hasConversation: hasConversation,
+                hasUsableContext: hasUsableContext,
+                defaultSynthesisInstruction: defaultSynthesisInstruction
             ),
             messages: requestMessages,
             messageAttachments: messageAttachments
@@ -80,12 +96,41 @@ struct MarkExportService {
             browserPageContexts: browserPageContexts,
             contextualMessages: contextualMessages,
             conversationMessages: conversationMessages,
+            hasUsableContext: hasUsableContext,
+            defaultSynthesisInstruction: defaultSynthesisInstruction,
             request: request,
             onDebugLog: onDebugLog
         )
 
         let response = try await conversationService.send(request: request, configuration: noteConfiguration)
-        let generatedContent = try Self.parseGeneratedContent(from: response.message.text)
+
+        CommandExportGenerationLogger.logMarkModelResponse(
+            responseText: response.message.text,
+            onDebugLog: onDebugLog
+        )
+        var generatedContent = try MarkGeneratedContentParser.parse(
+            response.message.text,
+            fallbackTitle: primaryPage.title
+        )
+
+        if !hasUserHint && !hasConversation {
+            let sanitizedBody = MarkExportBodySanitizer.sanitizeForPageOnlyBookmark(generatedContent.body)
+            generatedContent = MarkGeneratedContentParser.Parsed(
+                title: generatedContent.title,
+                body: sanitizedBody
+            )
+        }
+
+        let finalizedBody = MarkExportBodySanitizer.ensureMinimumContent(
+            generatedContent.body,
+            primaryPage: primaryPage,
+            userHint: userHint
+        )
+        generatedContent = MarkGeneratedContentParser.Parsed(
+            title: generatedContent.title,
+            body: finalizedBody
+        )
+
         let host = URL(string: primaryPage.url)?.host ?? ""
 
         let result = try noteWriter.write(
@@ -115,7 +160,7 @@ struct MarkExportService {
         return result
     }
 
-    private static func hasSubstantiveConversation(_ messages: [ConversationMessageDTO]) -> Bool {
+    static func hasSubstantiveConversation(_ messages: [ConversationMessageDTO]) -> Bool {
         messages.contains { message in
             guard message.role == .user || message.role == .assistant else {
                 return false
@@ -134,11 +179,19 @@ struct MarkExportService {
         }
     }
 
+    private static func hasSelectedText(in contextualMessages: [ConversationMessageDTO]) -> Bool {
+        contextualMessages.contains { message in
+            message.role == .system && message.text.hasPrefix("Selected text from")
+        }
+    }
+
     private static func generationSystemPrompt(
         configuration: MarkExportConfiguration,
         userHint: String,
         primaryPage: ConversationPageReferences.PageReference,
-        hasConversation: Bool
+        hasConversation: Bool,
+        hasUsableContext: Bool,
+        defaultSynthesisInstruction: MarkExportDefaultSynthesisInstruction.Result?
     ) -> String {
         var prompt = MarkExportPrompts.resolvedBasePrompt(from: configuration)
 
@@ -159,66 +212,46 @@ struct MarkExportService {
             """
         }
 
+        if !hasUsableContext {
+            prompt += """
+
+            Limited page text was captured (mostly title and URL). Still write a non-empty ## Highlights section with at least 2 short bullets inferred cautiously from the title, URL, and any visible context—never leave the body empty.
+            """
+        }
+
         if !hasUserHint && !hasConversation {
             prompt += """
 
-            There is no user hint and no substantive conversation. Omit ## Why I saved this and ## My angle unless the page content alone justifies a specific, non-generic reason. Prefer a lean note with ## What stood out only.
+            There is no user hint and no substantive conversation—only the /mark or // command and page context.
+            Write ## Highlights only with substantive bullets or sentences. Do NOT include a lead paragraph, ## Why I saved this, or ## My notes. Do not infer why the user saved the page or state their opinion.
             """
+
+            if let defaultSynthesisInstruction {
+                prompt += """
+
+
+                Default synthesis task (user did not specify an angle; scenario: \(defaultSynthesisInstruction.scenario.rawValue)):
+                \(defaultSynthesisInstruction.instruction)
+                """
+            }
         } else if !hasUserHint {
             prompt += """
 
-            There is no user hint. Omit ## My angle unless the conversation clearly states the user's perspective. Only include ## Why I saved this if the conversation states a concrete reason to save this page.
+            There is no user hint. Distill substantive conversation into a short lead paragraph before ## Highlights. Always include a non-empty ## Highlights section. Put bookmark motives and user questions in ## Why I saved this; use ## My notes only for clear subjective opinions.
             """
         } else if !hasConversation {
             prompt += """
 
-            There is no conversation yet. Use the user hint for ## My angle when it expresses perspective; use ## Why I saved this only when the hint states a concrete reason. Do not invent motivation.
+            There is no conversation yet—no lead paragraph. Always include a non-empty ## Highlights section about the page. Honor the user's hint inside ## Highlights and/or ## Why I saved this as appropriate; use ## My notes only when the hint is clearly opinionated. Do not invent motivation or opinions.
+            """
+        } else {
+            prompt += """
+
+            Distill substantive conversation into a short lead paragraph before ## Highlights. Always include a non-empty ## Highlights section. Combine the hint and conversation for ## Why I saved this and ## My notes as appropriate.
             """
         }
 
         return prompt
-    }
-
-    private struct GeneratedNoteContent: Decodable {
-        let title: String
-        let body: String
-    }
-
-    private static func parseGeneratedContent(from responseText: String) throws -> GeneratedNoteContent {
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jsonPayload = extractJSONPayload(from: trimmed)
-
-        guard let data = jsonPayload.data(using: .utf8) else {
-            throw MarkExportServiceError.invalidModelResponse
-        }
-
-        do {
-            return try JSONDecoder().decode(GeneratedNoteContent.self, from: data)
-        } catch {
-            throw MarkExportServiceError.invalidModelResponse
-        }
-    }
-
-    private static func extractJSONPayload(from text: String) -> String {
-        if text.hasPrefix("```") {
-            var lines = text.components(separatedBy: "\n")
-            if lines.first?.hasPrefix("```") == true {
-                lines.removeFirst()
-            }
-            if lines.last?.hasPrefix("```") == true {
-                lines.removeLast()
-            }
-            if lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "json" {
-                lines.removeFirst()
-            }
-            return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end {
-            return String(text[start ... end])
-        }
-
-        return text
     }
 }
 

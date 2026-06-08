@@ -447,9 +447,27 @@ final class ConversationCoordinator {
         session.messages.append(userMessage)
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         session.isConversationInProgress = true
-        session.inFlightActivity = .generatingBookmark
+
+        let presetGeneratingContext = ConversationPageReferences.oldestPageReference(
+            browserPageContexts: browserPageContexts,
+            contextualMessages: contextualMessages,
+            conversationMessages: session.messages
+        ).flatMap { primaryPage in
+            MarkExportDefaultSynthesisInstruction.resolve(
+                userHint: markCommand.userHint,
+                hasConversation: MarkExportService.hasSubstantiveConversation(session.messages),
+                primaryPage: primaryPage,
+                contextualMessages: contextualMessages
+            )?.presetGeneratingContext
+        }
+
+        session.inFlightActivity = .generatingBookmark(preset: presetGeneratingContext)
         publishSession()
-        setStatus("Writing bookmark with \(configuration.providerDisplayName)...")
+        if presetGeneratingContext != nil {
+            setStatus("Writing bookmark with \(configuration.providerDisplayName) using a Cue preset...")
+        } else {
+            setStatus("Writing bookmark with \(configuration.providerDisplayName)...")
+        }
         setError(nil)
         syncPanel()
 

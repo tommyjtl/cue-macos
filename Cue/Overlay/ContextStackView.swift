@@ -406,6 +406,14 @@ private struct ComposerCommandStatusBox: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let scenarioLabel = activity.presetScenarioLabel,
+                   let presetHint = activity.presetHint {
+                    Text("Cue preset (\(scenarioLabel)): \(presetHint)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -952,9 +960,13 @@ private struct ContextStackPreviewCard: View {
 
 // MARK: - Composer input
 
-private enum ComposerInputMetrics {
+enum ComposerInputMetrics {
     static let compactVisibleLineCount = 1
     static let expandedVisibleLineCount = 2
+    static let chatPanelWidth: CGFloat = 360
+    static let chatPanelHorizontalPadding: CGFloat = 14
+    static let expandThresholdMultiplier: CGFloat = 1.05
+    static let collapseThresholdMultiplier: CGFloat = 0.95
     /// Inset applied on each vertical edge of the text view (top and bottom).
     static let textContainerVerticalInset: CGFloat = 8
     static let textContainerHorizontalInset: CGFloat = 6
@@ -970,6 +982,10 @@ private enum ComposerInputMetrics {
 
     static var totalVerticalTextInset: CGFloat {
         textContainerVerticalInset * 2
+    }
+
+    static var fallbackLayoutWidth: CGFloat {
+        chatPanelWidth - (chatPanelHorizontalPadding * 2)
     }
 
     static func lineHeight(fontSize: CGFloat) -> CGFloat {
@@ -993,8 +1009,47 @@ private enum ComposerInputMetrics {
         min(max(count, compactVisibleLineCount), expandedVisibleLineCount)
     }
 
+    static func stableLayoutWidth(contentViewWidth: CGFloat) -> CGFloat {
+        let measuredWidth = max(contentViewWidth, 1)
+        if measuredWidth >= fallbackLayoutWidth * 0.9 {
+            return measuredWidth
+        }
+        return fallbackLayoutWidth
+    }
+
+    static func resolvedLineTier(
+        isEmpty: Bool,
+        hasExplicitNewline: Bool,
+        lineFragmentCount: Int,
+        usedHeight: CGFloat,
+        singleLineHeight: CGFloat,
+        currentVisibleLineCount: Int
+    ) -> Int {
+        guard !isEmpty else {
+            return compactVisibleLineCount
+        }
+
+        if hasExplicitNewline || lineFragmentCount >= 2 {
+            return expandedVisibleLineCount
+        }
+
+        let expandThreshold = singleLineHeight * expandThresholdMultiplier
+        let collapseThreshold = singleLineHeight * collapseThresholdMultiplier
+
+        if clampedVisibleLineCount(currentVisibleLineCount) >= expandedVisibleLineCount {
+            return usedHeight > collapseThreshold ? expandedVisibleLineCount : compactVisibleLineCount
+        }
+
+        return usedHeight > expandThreshold ? expandedVisibleLineCount : compactVisibleLineCount
+    }
+
     /// 1 = single-line chrome; 2 = two-line chrome (wraps or explicit newline).
-    static func displayedLineTier(for textView: NSTextView, fontSize: CGFloat) -> Int {
+    static func displayedLineTier(
+        for textView: NSTextView,
+        fontSize: CGFloat,
+        layoutWidth: CGFloat,
+        currentVisibleLineCount: Int
+    ) -> Int {
         let trimmed = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return compactVisibleLineCount
@@ -1002,20 +1057,39 @@ private enum ComposerInputMetrics {
 
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else {
-            return compactVisibleLineCount
+            return clampedVisibleLineCount(currentVisibleLineCount)
         }
 
-        let width = max(textView.bounds.width, 1)
+        let width = max(layoutWidth, 1)
+        let savedContainerSize = textContainer.containerSize
+        defer {
+            textContainer.containerSize = savedContainerSize
+            layoutManager.ensureLayout(for: textContainer)
+        }
+
         textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         layoutManager.ensureLayout(for: textContainer)
 
-        let usedHeight = layoutManager.usedRect(for: textContainer).height
-        let singleLineHeight = lineHeight(fontSize: fontSize)
-        if usedHeight > singleLineHeight * 1.05 {
-            return expandedVisibleLineCount
+        let glyphRange = layoutManager.glyphRange(for: textContainer)
+        var lineFragmentCount = 0
+        if glyphRange.length > 0 {
+            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, _, _, _, _ in
+                lineFragmentCount += 1
+            }
         }
 
-        return compactVisibleLineCount
+        let usedHeight = layoutManager.usedRect(for: textContainer).height
+        let singleLineHeight = lineHeight(fontSize: fontSize)
+        let hasExplicitNewline = trimmed.contains(where: \.isNewline)
+
+        return resolvedLineTier(
+            isEmpty: false,
+            hasExplicitNewline: hasExplicitNewline,
+            lineFragmentCount: lineFragmentCount,
+            usedHeight: usedHeight,
+            singleLineHeight: singleLineHeight,
+            currentVisibleLineCount: currentVisibleLineCount
+        )
     }
 }
 
@@ -1190,7 +1264,13 @@ private struct ComposerTextField: NSViewRepresentable {
         }
 
         func updateVisibleLineCount(for textView: NSTextView) {
-            let tier = ComposerInputMetrics.displayedLineTier(for: textView, fontSize: fontSize)
+            let layoutWidth = scrollView?.stableTextLayoutWidth ?? ComposerInputMetrics.fallbackLayoutWidth
+            let tier = ComposerInputMetrics.displayedLineTier(
+                for: textView,
+                fontSize: fontSize,
+                layoutWidth: layoutWidth,
+                currentVisibleLineCount: visibleLineCount
+            )
             let clamped = ComposerInputMetrics.clampedVisibleLineCount(tier)
             guard visibleLineCount != clamped else {
                 return
@@ -1264,6 +1344,10 @@ final class ComposerInputScrollView: NSScrollView {
     private var isRefreshingLayout = false
     var onAfterLayout: ((NSTextView) -> Void)?
 
+    var stableTextLayoutWidth: CGFloat {
+        ComposerInputMetrics.stableLayoutWidth(contentViewWidth: contentView.bounds.width)
+    }
+
     var viewportHeight: CGFloat = 40 {
         didSet {
             if oldValue != viewportHeight {
@@ -1301,7 +1385,7 @@ final class ComposerInputScrollView: NSScrollView {
         isRefreshingLayout = true
         defer { isRefreshingLayout = false }
 
-        let width = max(contentView.bounds.width, 1)
+        let width = stableTextLayoutWidth
         textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
 
         layoutManager.ensureLayout(for: textContainer)

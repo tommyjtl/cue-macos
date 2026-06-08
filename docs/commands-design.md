@@ -4,7 +4,7 @@
 
 | Command | Aliases | Intent |
 |---------|---------|--------|
-| `/save` | `/note`, `/notes` | Export the current conversation as JSON (same as Recents → Export JSON) |
+| `/save` | — | Export the current conversation as JSON (same as Recents → Export JSON) |
 | `/mark` | `//` | Bookmark the **oldest page** in the session via LLM → markdown file |
 
 ## Settings
@@ -17,4 +17,4 @@
 ## Export behavior
 
 - **Save:** `NSSavePanel` → `ConversationExport.encode` (no LLM).
-- **Mark:** `{markFolder}/{yyyy-MM-dd}/{title}--{domain}.md` via LLM.
+- **Mark:** LLM returns markdown (line 1 = title, rest = body). Frontmatter always includes `tags: [cue]`. Output: `{markFolder}/{yyyy-MM-dd}/{title}.md` (domain stays in frontmatter only).

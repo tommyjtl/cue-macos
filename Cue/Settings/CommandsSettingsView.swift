@@ -24,7 +24,7 @@ private struct SaveExportSettingsSection: View {
             SettingsCard {
                 SettingsToggleRow(
                     title: "Save with /save",
-                    subtitle: "Type /save in the overlay composer (or /note) to export the conversation as JSON.",
+                    subtitle: "Type /save in the overlay composer to export the conversation as JSON.",
                     isOn: appState.saveExportConfigurationBinding(for: \.isEnabled)
                 )
 
@@ -98,7 +98,7 @@ private struct MarkExportSettingsSection: View {
                 if appState.markExportConfiguration.isEnabled {
                     exportFolderSection(
                         configuration: appState.markExportConfiguration,
-                        pathPattern: "Bookmarks are saved to {folder}/{yyyy-MM-dd}/{title}--{domain}.md",
+                        pathPattern: "Bookmarks are saved to {folder}/{yyyy-MM-dd}/{title}.md",
                         panelMessage: "Choose the folder where Cue should write page bookmarks."
                     ) {
                         chooseExportFolder()
@@ -115,10 +115,12 @@ private struct MarkExportSettingsSection: View {
             }
 
             if appState.markExportConfiguration.isEnabled {
-                SettingsFootnote("Requires a web page in context. Type /mark or // at the start of the composer (// becomes /mark). Add a hint for your angle.")
+                SettingsFootnote("Requires a web page in context. Type /mark or // at the start of the composer (// becomes /mark). Bookmarks are tagged cue in frontmatter. Reset the prompt if it still asks for JSON.")
             }
         }
-        .onAppear { loadPromptDraftIfNeeded() }
+        .onAppear {
+            loadPromptDraftIfNeeded()
+        }
         .onChange(of: appState.markExportConfiguration.systemPrompt) { _, newValue in
             if systemPromptDraft != newValue {
                 systemPromptDraft = newValue

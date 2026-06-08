@@ -29,8 +29,8 @@ Linear-style tickets: **title** = problem or outcome; body = scope. Two lanes on
 
 ### Bookmarks & notes
 
-- [x] **Export chat context with `/save`** — `/save` (aliases `/note`, `/notes`) exports conversation JSON via save dialog (same as Recents → Export JSON). Settings → Commands (toggle + optional default folder). <mark>Jun 4, 2026</mark>
-- [x] **Mark pages with `/mark` and `//`** — Bookmarks oldest page in session; separate export folder; `{title}--{domain}.md`. `//` is a quick alias. Settings → Commands. <mark>Jun 4, 2026</mark>
+- [x] **Export chat context with `/save`** — `/save` exports conversation JSON via save dialog (same as Recents → Export JSON). Settings → Commands (toggle + optional default folder). <mark>Jun 4, 2026</mark>
+- [x] **Mark pages with `/mark` and `//`** — Bookmarks oldest page in session; separate export folder; `{title}.md`. `//` is a quick alias. Settings → Commands. <mark>Jun 4, 2026</mark>
 - [ ] **Daily digest with review and Obsidian export** — End-of-day (or on-demand) local summary of conversations, topics, and notable context; in-app review (edit/pin/discard); export markdown with frontmatter to a vault folder; optional templates (Learned / Decisions / Follow-ups / References). <mark>May 25, 2026</mark>
 
 ### AI & search
