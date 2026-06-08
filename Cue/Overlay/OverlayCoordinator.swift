@@ -30,7 +30,8 @@ final class OverlayCoordinator {
         onLoadMostRecent: @escaping () -> Void,
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
-        onPresentationChange: @escaping () -> Void
+        onPresentationChange: @escaping () -> Void,
+        onInterceptDismissShortcut: @escaping () -> Bool = { false }
     ) {
         windowController = ContextStackWindowController(
             dismissChatShortcut: dismissChatShortcut,
@@ -41,7 +42,8 @@ final class OverlayCoordinator {
             onLoadMostRecent: onLoadMostRecent,
             onSetWebSearchEnabled: onSetWebSearchEnabled,
             onRemoveContextItem: onRemoveContextItem,
-            onPresentationChange: onPresentationChange
+            onPresentationChange: onPresentationChange,
+            onInterceptDismissShortcut: onInterceptDismissShortcut
         )
     }
 

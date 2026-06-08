@@ -40,6 +40,8 @@ final class AppModel {
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
         static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
+        static let playSelectedTextInsteadOfAddingToContext = AppPreferenceKeys.playSelectedTextInsteadOfAddingToContextKey
+        static let selectedTextTTSLanguage = AppPreferenceKeys.selectedTextTTSLanguageKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -102,6 +104,10 @@ final class AppModel {
     @ObservationIgnored private var browserWebServer: BrowserWebServer?
     @ObservationIgnored private var permissionMonitor: PermissionMonitor?
     @ObservationIgnored private var clipboardMonitor: ClipboardMonitor?
+    @ObservationIgnored private let ttsService = TTSService.shared
+    @ObservationIgnored private let ttsActivityIndicator = TTSActivityIndicatorController()
+    @ObservationIgnored private let ttsStatusToast = TTSStatusToastController()
+    @ObservationIgnored private var ttsDismissShortcutMonitor: TTSDismissShortcutMonitor?
     private var hasStartedBackgroundServices = false
 
     // Observable permission state — updated from AppModel's stable monitoring tasks,
@@ -114,6 +120,8 @@ final class AppModel {
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
     var hideMainAppOnStart: Bool
+    var playSelectedTextInsteadOfAddingToContext: Bool
+    var selectedTextTTSLanguage: TTSSelectedTextLanguage
     var captureShortcut: CaptureShortcut
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
@@ -170,6 +178,8 @@ final class AppModel {
         conversationStore = openedConversationStore
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         hideMainAppOnStart = Self.loadHideMainAppOnStart()
+        playSelectedTextInsteadOfAddingToContext = Self.loadPlaySelectedTextInsteadOfAddingToContext()
+        selectedTextTTSLanguage = Self.loadSelectedTextTTSLanguage()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
@@ -244,8 +254,13 @@ final class AppModel {
             },
             onPresentationChange: { [weak self] in
                 self?.refreshOverlayPresentationState()
+            },
+            onInterceptDismissShortcut: { [weak self] in
+                self?.cancelActiveSelectedTextSpeechIfNeeded() ?? false
             }
         )
+
+        startTTSDismissShortcutMonitor()
 
         let browserWebServer = BrowserWebServer { [weak self] context in
             guard let self else { return .duplicate }
@@ -291,6 +306,11 @@ final class AppModel {
     }
 
     private func handleExternalClipboardText(_ text: String, from sourceApp: NSRunningApplication?) {
+        if playSelectedTextInsteadOfAddingToContext {
+            playSelectedTextFromClipboard(text, from: sourceApp)
+            return
+        }
+
         guard contextSession?.attachClipboardText(text, frontmostApplication: sourceApp) == true else {
             print("[AppModel] Clipboard text already attached — \(ClipboardMonitor.preview(text))")
             return
@@ -300,6 +320,83 @@ final class AppModel {
         setCaptureErrorMessage(nil, source: .selectedText)
         print("[AppModel] Attached clipboard text to context — \(ClipboardMonitor.describe(text))")
         showContextStackNearCursor()
+    }
+
+    private func playSelectedTextFromClipboard(_ text: String, from sourceApp: NSRunningApplication?) {
+        let sourceName = sourceApp?.localizedName ?? "unknown"
+        print("[AppModel] Speaking clipboard text from \(sourceName) — \(ClipboardMonitor.describe(text))")
+
+        ttsActivityIndicator.showGenerating()
+
+        ttsService.speakInBackground(
+            text: text,
+            configuration: TTSConfiguration(selectedTextLanguage: selectedTextTTSLanguage),
+            onPlaybackStarted: { [weak self] in
+                self?.ttsActivityIndicator.showSpeaking()
+                self?.buildStatus = "Playing selected text (double ⌘C)."
+                self?.setCaptureErrorMessage(nil, source: .selectedText)
+            },
+            onSuccess: { [weak self] in
+                self?.ttsActivityIndicator.hide()
+                self?.buildStatus = "Finished reading selected text."
+                self?.setCaptureErrorMessage(nil, source: .selectedText)
+            },
+            onFailure: { [weak self] message in
+                self?.ttsActivityIndicator.hide()
+                let presentation = TTSStatusToastCopy.errorPresentation(for: message)
+                self?.ttsStatusToast.showError(title: presentation.title, subtitle: presentation.subtitle)
+                self?.buildStatus = presentation.subtitle ?? presentation.title
+                self?.setCaptureErrorMessage(message, source: .selectedText)
+                print("[AppModel] TTS playback failed — \(message)")
+            }
+        )
+    }
+
+    @discardableResult
+    private func cancelActiveSelectedTextSpeechIfNeeded() -> Bool {
+        guard playSelectedTextInsteadOfAddingToContext else { return false }
+        guard ttsService.isActive || ttsActivityIndicator.isVisible || ttsStatusToast.isVisible else { return false }
+
+        ttsService.stop()
+        ttsActivityIndicator.hide()
+        ttsStatusToast.hide()
+        buildStatus = "Speech cancelled (double Escape)."
+        setCaptureErrorMessage(nil, source: .selectedText)
+        print("[AppModel] Cancelled active selected-text speech")
+        return true
+    }
+
+    private func startTTSDismissShortcutMonitor() {
+        refreshTTSDismissShortcutMonitor()
+    }
+
+    private func refreshTTSDismissShortcutMonitor() {
+        guard playSelectedTextInsteadOfAddingToContext else {
+            ttsDismissShortcutMonitor?.stop()
+            ttsDismissShortcutMonitor = nil
+            return
+        }
+
+        if ttsDismissShortcutMonitor == nil {
+            ttsDismissShortcutMonitor = TTSDismissShortcutMonitor(
+                dismissShortcut: dismissChatShortcut,
+                shouldCancel: { [weak self] in
+                    guard let self else { return false }
+                    guard self.playSelectedTextInsteadOfAddingToContext else { return false }
+                    guard self.ttsService.isActive || self.ttsActivityIndicator.isVisible || self.ttsStatusToast.isVisible else { return false }
+                    guard self.overlayCoordinator?.isVisible != true else { return false }
+                    return true
+                },
+                onCancel: { [weak self] in
+                    _ = self?.cancelActiveSelectedTextSpeechIfNeeded()
+                }
+            )
+            ttsDismissShortcutMonitor?.start()
+            ttsDismissShortcutMonitor?.refreshAccessibilityDependentMonitors()
+            return
+        }
+
+        ttsDismissShortcutMonitor?.updateDismissShortcut(dismissChatShortcut)
     }
 
     // MARK: - Permission Monitoring
@@ -334,6 +431,7 @@ final class AppModel {
 
         hotkeyManager?.refreshAccessibilityDependentMonitors()
         clipboardMonitor?.refreshAccessibilityDependentMonitors()
+        ttsDismissShortcutMonitor?.refreshAccessibilityDependentMonitors()
         overlayCoordinator?.refreshAccessibilityDependentGlobalMonitors()
     }
 
@@ -396,6 +494,7 @@ final class AppModel {
         let normalizedShortcut = shortcut.normalized
         dismissChatShortcut = normalizedShortcut
         overlayCoordinator?.updateDismissChatShortcut(normalizedShortcut)
+        ttsDismissShortcutMonitor?.updateDismissShortcut(normalizedShortcut)
         saveDismissChatShortcut(normalizedShortcut)
         buildStatus = "Dismiss chat shortcut updated to \(normalizedShortcut.displayString)."
     }
@@ -521,6 +620,24 @@ final class AppModel {
     func updateHideMainAppOnStart(_ isEnabled: Bool) {
         hideMainAppOnStart = isEnabled
         saveHideMainAppOnStart(isEnabled)
+    }
+
+    func updatePlaySelectedTextInsteadOfAddingToContext(_ isEnabled: Bool) {
+        playSelectedTextInsteadOfAddingToContext = isEnabled
+        savePlaySelectedTextInsteadOfAddingToContext(isEnabled)
+
+        if !isEnabled {
+            ttsService.stop()
+            ttsActivityIndicator.hide()
+            ttsStatusToast.hide()
+        }
+
+        refreshTTSDismissShortcutMonitor()
+    }
+
+    func updateSelectedTextTTSLanguage(_ language: TTSSelectedTextLanguage) {
+        selectedTextTTSLanguage = language
+        saveSelectedTextTTSLanguage(language)
     }
 
     private var shouldShowMainWindowOnLaunch: Bool {
@@ -872,6 +989,22 @@ final class AppModel {
 
     private func saveHideMainAppOnStart(_ isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.hideMainAppOnStart)
+    }
+
+    private static func loadPlaySelectedTextInsteadOfAddingToContext() -> Bool {
+        AppPreferenceKeys.playSelectedTextInsteadOfAddingToContext
+    }
+
+    private func savePlaySelectedTextInsteadOfAddingToContext(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.playSelectedTextInsteadOfAddingToContext)
+    }
+
+    private static func loadSelectedTextTTSLanguage() -> TTSSelectedTextLanguage {
+        AppPreferenceKeys.selectedTextTTSLanguage
+    }
+
+    private func saveSelectedTextTTSLanguage(_ language: TTSSelectedTextLanguage) {
+        UserDefaults.standard.set(language.rawValue, forKey: UserDefaultsKey.selectedTextTTSLanguage)
     }
 
     private func syncOverlayState() {
@@ -1303,6 +1436,62 @@ private struct MenuBarContentView: View {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
+    }
+}
+
+struct SelectedTextPlaybackSettingsSection: View {
+    @Environment(AppModel.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Override the original add to context with a selected text",
+                    subtitle: appState.playSelectedTextInsteadOfAddingToContext ? "On" : "Off"
+                ) {
+                    Toggle(
+                        "Override the original add to context with a selected text",
+                        isOn: playSelectedTextBinding
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                }
+
+                SettingsRowDivider()
+
+                SettingsRow(
+                    title: "Speech language",
+                    subtitle: appState.selectedTextTTSLanguage.title
+                ) {
+                    Picker("Speech language", selection: selectedTextLanguageBinding) {
+                        ForEach(TTSSelectedTextLanguage.allCases) { language in
+                            Text(language.title).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .disabled(!appState.playSelectedTextInsteadOfAddingToContext)
+                }
+            }
+
+            SettingsFootnote(
+                "When on, double ⌘C reads copied text aloud through the local TTS backend instead of attaching it to context. A small cursor badge shows while speech is generating and while it is playing; errors still appear as a toast. Double Escape cancels generation or playback. Choose English, French, or German so Supertonic receives an explicit language code (`en`, `fr`, or `de`); Cue does not auto-detect language. Requires cue-tts-backend-experiment running on localhost:7788."
+            )
+        }
+    }
+
+    private var playSelectedTextBinding: Binding<Bool> {
+        Binding(
+            get: { appState.playSelectedTextInsteadOfAddingToContext },
+            set: { appState.updatePlaySelectedTextInsteadOfAddingToContext($0) }
+        )
+    }
+
+    private var selectedTextLanguageBinding: Binding<TTSSelectedTextLanguage> {
+        Binding(
+            get: { appState.selectedTextTTSLanguage },
+            set: { appState.updateSelectedTextTTSLanguage($0) }
+        )
     }
 }
 

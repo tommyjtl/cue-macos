@@ -60,6 +60,7 @@ private struct GeneralSettingsView: View {
     var body: some View {
         SettingsDetailScaffold(title: "General") {
             VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                SelectedTextPlaybackSettingsSection()
                 StartupSettingsSection()
                 SoundEffectsSettingsSection()
                 ShortcutSettingsSection()

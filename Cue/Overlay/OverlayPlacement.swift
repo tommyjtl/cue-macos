@@ -3,27 +3,67 @@ import Foundation
 
 enum OverlayPlacement {
     private enum Layout {
-        static let cursorOffset: CGFloat = 0
+        static let defaultCursorOffset: CGFloat = 0
         static let screenEdgeInset: CGFloat = 12
     }
 
-    static func clampedOrigin(for size: NSSize, near point: NSPoint) -> NSPoint {
+    /// Offset between the cursor hot spot and the panel edge, in screen points.
+    static let contextStackCursorOffset: CGFloat = 0
+    static let ttsToastCursorOffset: CGFloat = 20
+    static let ttsActivityIndicatorOffset = NSSize(width: 10, height: 10)
+
+    static func clampedOriginTopTrailing(
+        for size: NSSize,
+        near point: NSPoint,
+        offset: NSSize = ttsActivityIndicatorOffset
+    ) -> NSPoint {
         let placementFrame = ScreenLocator.target(containing: point)?.placementFrame
             ?? NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
 
-        let rightOriginX = point.x + Layout.cursorOffset
-        let leftOriginX = point.x - size.width - Layout.cursorOffset
+        var origin = NSPoint(
+            x: point.x + offset.width,
+            y: point.y + offset.height
+        )
+
+        if origin.x + size.width > placementFrame.maxX - Layout.screenEdgeInset {
+            origin.x = point.x - size.width - offset.width
+        }
+
+        if origin.y + size.height > placementFrame.maxY - Layout.screenEdgeInset {
+            origin.y = point.y - size.height - offset.height
+        }
+
+        origin.x = max(origin.x, placementFrame.minX + Layout.screenEdgeInset)
+        origin.y = min(
+            max(origin.y, placementFrame.minY + Layout.screenEdgeInset),
+            placementFrame.maxY - size.height - Layout.screenEdgeInset
+        )
+
+        return origin
+    }
+
+    static func clampedOrigin(
+        for size: NSSize,
+        near point: NSPoint,
+        cursorOffset: CGFloat = Layout.defaultCursorOffset
+    ) -> NSPoint {
+        let placementFrame = ScreenLocator.target(containing: point)?.placementFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+
+        let rightOriginX = point.x + cursorOffset
+        let leftOriginX = point.x - size.width - cursorOffset
         let fitsOnRight = rightOriginX + size.width <= placementFrame.maxX - Layout.screenEdgeInset
 
         var origin = NSPoint(
             x: fitsOnRight ? rightOriginX : leftOriginX,
-            y: point.y - size.height - Layout.cursorOffset
+            y: point.y - size.height - cursorOffset
         )
 
         if origin.y < placementFrame.minY {
             origin.y = min(
-                point.y + Layout.cursorOffset,
+                point.y + cursorOffset,
                 placementFrame.maxY - size.height - Layout.screenEdgeInset
             )
         }
