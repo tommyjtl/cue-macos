@@ -81,6 +81,8 @@ enum SoundEffectPlayer {
 enum AppPreferenceKeys {
     static let soundEffectsEnabledKey = "sound-effects-enabled"
     static let hideMainAppOnStartKey = "hide-main-app-on-start"
+    static let ocrImagesForLocalModelsKey = "ocr-images-for-local-models"
+    static let ocrAutoDetectLanguageKey = "ocr-auto-detect-language"
 
     static var soundEffectsEnabled: Bool {
         if UserDefaults.standard.object(forKey: soundEffectsEnabledKey) == nil {
@@ -92,5 +94,13 @@ enum AppPreferenceKeys {
 
     static var hideMainAppOnStart: Bool {
         UserDefaults.standard.bool(forKey: hideMainAppOnStartKey)
+    }
+
+    static var ocrImagesForLocalModels: Bool {
+        UserDefaults.standard.bool(forKey: ocrImagesForLocalModelsKey)
+    }
+
+    static var ocrAutoDetectLanguage: Bool {
+        UserDefaults.standard.bool(forKey: ocrAutoDetectLanguageKey)
     }
 }
