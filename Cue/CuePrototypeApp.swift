@@ -1145,6 +1145,10 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
             width: SettingsLayout.MainWindow.minWidth,
             height: SettingsLayout.MainWindow.minHeight
         )
+        window.maxSize = NSSize(
+            width: SettingsLayout.MainWindow.minWidth,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
@@ -1205,7 +1209,7 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         NSSize(
-            width: max(frameSize.width, SettingsLayout.MainWindow.minWidth),
+            width: SettingsLayout.MainWindow.minWidth,
             height: max(frameSize.height, SettingsLayout.MainWindow.minHeight)
         )
     }
@@ -1216,14 +1220,14 @@ final class MainContentWindowController: NSWindowController, NSWindowDelegate {
         }
 
         var frame = window.frame
-        let minWidth = SettingsLayout.MainWindow.minWidth
+        let fixedWidth = SettingsLayout.MainWindow.minWidth
         let minHeight = SettingsLayout.MainWindow.minHeight
-        guard frame.width < minWidth || frame.height < minHeight else {
+        guard frame.width != fixedWidth || frame.height < minHeight else {
             return
         }
 
         frame.size = NSSize(
-            width: max(frame.width, minWidth),
+            width: fixedWidth,
             height: max(frame.height, minHeight)
         )
         window.setFrame(frame, display: true)

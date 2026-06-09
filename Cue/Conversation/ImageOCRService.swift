@@ -38,7 +38,7 @@ enum ImageOCRFormatting {
 }
 
 enum ImageOCRService {
-    static func extractTextBlocks(from attachments: [ConversationImageAttachmentDTO]) async throws -> [String] {
+    nonisolated static func extractTextBlocks(from attachments: [ConversationImageAttachmentDTO]) async throws -> [String] {
         var blocks: [String] = []
         blocks.reserveCapacity(attachments.count)
 
@@ -49,39 +49,47 @@ enum ImageOCRService {
         return blocks
     }
 
-    static func extractStructuredText(from imageData: Data) async throws -> String {
+    nonisolated static func extractStructuredText(from imageData: Data) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            try performStructuredTextRecognition(on: imageData)
+        }.value
+    }
+
+    nonisolated private static func performStructuredTextRecognition(on imageData: Data) throws -> String {
         guard let cgImage = cgImage(from: imageData) else {
             throw ImageOCRError.invalidImage
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+        var recognitionError: Error?
+        var extractedText = ""
 
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: "")
-                    return
-                }
-
-                continuation.resume(returning: formatObservations(observations))
+        let request = VNRecognizeTextRequest { request, error in
+            if let error {
+                recognitionError = error
+                return
             }
 
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
+            guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                return
             }
+
+            extractedText = formatObservations(observations)
         }
+
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+
+        if let recognitionError {
+            throw recognitionError
+        }
+
+        return extractedText
     }
 
-    private static func cgImage(from data: Data) -> CGImage? {
+    nonisolated private static func cgImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
@@ -89,7 +97,7 @@ enum ImageOCRService {
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
-    private static func formatObservations(_ observations: [VNRecognizedTextObservation]) -> String {
+    nonisolated private static func formatObservations(_ observations: [VNRecognizedTextObservation]) -> String {
         struct LineItem {
             let text: String
             let midY: CGFloat
@@ -151,6 +159,31 @@ enum ImageOCRService {
 }
 
 enum ConversationRequestOCRPreprocessor {
+    static func buildRequest(
+        systemPrompt: String,
+        messages: [ConversationMessageDTO],
+        messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
+        usesImageOCR: Bool,
+        onStatus: ((String) -> Void)? = nil
+    ) async throws -> ConversationRequestDTO {
+        guard usesImageOCR, !messageAttachments.isEmpty else {
+            return ConversationRequestDTO(
+                systemPrompt: systemPrompt,
+                messages: messages,
+                messageAttachments: messageAttachments
+            )
+        }
+
+        onStatus?("Extracting text from images...")
+        let ocrTextsByMessageID = try await extractOCRTexts(from: messageAttachments)
+        return apply(
+            systemPrompt: systemPrompt,
+            messages: messages,
+            messageAttachments: messageAttachments,
+            ocrTextsByMessageID: ocrTextsByMessageID
+        )
+    }
+
     static func apply(
         systemPrompt: String,
         messages: [ConversationMessageDTO],
@@ -195,7 +228,7 @@ enum ConversationRequestOCRPreprocessor {
         )
     }
 
-    static func extractOCRTexts(
+    nonisolated static func extractOCRTexts(
         from messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
     ) async throws -> [UUID: [String]] {
         var ocrTextsByMessageID: [UUID: [String]] = [:]

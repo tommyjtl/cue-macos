@@ -1,13 +1,38 @@
 import SwiftUI
 
+private enum ChatConfigurationAnchor: String, Hashable {
+    case privateMode
+    case cloudMode
+}
+
 struct ChatSettingsView: View {
     var body: some View {
-        SettingsDetailScaffold(title: "Chat") {
-            VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
-                ChatActiveModeSection()
-                PrivateModeConfigurationSection()
-                CloudModeConfigurationSection()
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                    SettingsPageHeader(title: "Chat")
+
+                    ChatActiveModeSection { provider in
+                        let anchor: ChatConfigurationAnchor = switch provider {
+                        case .ollama: .privateMode
+                        case .openAI: .cloudMode
+                        }
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
+                    }
+
+                    PrivateModeConfigurationSection()
+                        .id(ChatConfigurationAnchor.privateMode)
+
+                    CloudModeConfigurationSection()
+                        .id(ChatConfigurationAnchor.cloudMode)
+                }
+                .padding(SettingsLayout.pagePadding)
+                .frame(maxWidth: SettingsLayout.pageMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 }
@@ -16,27 +41,43 @@ struct ChatSettingsView: View {
 
 private struct ChatActiveModeSection: View {
     @Environment(AppModel.self) private var appState
+    let onGoToConfiguration: (ConversationProvider) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: "Active Mode")
+        SettingsCard {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Choose a model to chat with")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-            SettingsCard {
-                SettingsCardBody {
-                    SettingsFieldGroup(label: "Mode") {
-                        Picker("Mode", selection: appState.conversationConfigurationBinding(for: \.provider)) {
-                            ForEach(ConversationProvider.allCases) { provider in
-                                Text(provider.title).tag(provider)
-                            }
+                    Text("Private mode runs models locally through Ollama. Cloud mode uses OpenAI. Configure each provider in the sections below.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    Picker("Mode", selection: appState.conversationConfigurationBinding(for: \.provider)) {
+                        ForEach(ConversationProvider.allCases) { provider in
+                            Text(provider.title).tag(provider)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+
+                    Button("Go to Configuration") {
+                        onGoToConfiguration(appState.conversationConfiguration.provider)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
                 }
             }
-
-            SettingsFootnote("Cue uses the selected mode when sending chat messages. Configure each mode below.")
+            .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+            .padding(.vertical, SettingsLayout.rowVerticalPadding)
         }
     }
 }
@@ -57,7 +98,9 @@ private struct PrivateModeConfigurationSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: isActive ? "Private Mode (Active)" : "Private Mode")
+            ChatModeSectionHeader(
+                title: isActive ? "Private Mode (Active)" : "Private Mode"
+            )
 
             SettingsCard {
                 SettingsCardBody {
@@ -66,28 +109,43 @@ private struct PrivateModeConfigurationSection: View {
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    SettingsFieldGroup(label: "Model") {
-                        Picker("Model", selection: appState.conversationConfigurationBinding(for: \.ollamaModel)) {
-                            ForEach(availableOllamaModels) { option in
-                                Text(option.pickerTitle).tag(option.modelName)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("Model")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            Spacer(minLength: 12)
+
+                            if let modelRowTrailingLabel {
+                                Text(modelRowTrailingLabel)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.trailing)
                             }
                         }
-                        .labelsHidden()
 
-                        HStack {
+                        HStack(alignment: .center, spacing: 12) {
+                            Picker("Model", selection: appState.conversationConfigurationBinding(for: \.ollamaModel)) {
+                                ForEach(availableOllamaModels) { option in
+                                    Text(option.pickerTitle).tag(option.modelName)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                             Button(isRefreshingOllamaModels ? "Refreshing..." : "Refresh Models") {
                                 Task {
                                     await refreshOllamaModels()
                                 }
                             }
                             .disabled(isRefreshingOllamaModels)
-
-                            Spacer()
-
-                            Text(selectedOllamaModelOption.source == .installed ? "Installed via /api/tags" : "Curated fallback")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
                         }
+
+                        Text(selectedOllamaModelOption.summary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     ollamaThinkingControl
@@ -117,9 +175,6 @@ private struct PrivateModeConfigurationSection: View {
 
             providerFootnotes([
                 "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping.",
-                selectedOllamaModelOption.summary,
-                selectedOllamaModelOption.thinkingSupport.statusDescription,
-                ollamaModelsStatus,
                 "When OCR is enabled, attached images are run through Apple Vision and sent as structured text instead of raw image data."
             ])
         }
@@ -184,6 +239,18 @@ private struct PrivateModeConfigurationSection: View {
             ?? OllamaModelCatalog.option(for: appState.conversationConfiguration.ollamaModel, source: .current)
     }
 
+    private var modelRowTrailingLabel: String? {
+        if isRefreshingOllamaModels {
+            return "Refreshing..."
+        }
+
+        if let ollamaModelsStatus, !ollamaModelsStatus.isEmpty {
+            return ollamaModelsStatus
+        }
+
+        return nil
+    }
+
     private var ollamaThinkingToggleBinding: Binding<Bool> {
         Binding(
             get: { appState.conversationConfiguration.ollamaThinkingMode == .on },
@@ -244,7 +311,9 @@ private struct CloudModeConfigurationSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: isActive ? "Cloud Mode (Active)" : "Cloud Mode")
+            ChatModeSectionHeader(
+                title: isActive ? "Cloud Mode (Active)" : "Cloud Mode"
+            )
 
             SettingsCard {
                 SettingsCardBody {
@@ -282,6 +351,21 @@ private struct CloudModeConfigurationSection: View {
 }
 
 // MARK: - Shared
+
+private struct ChatModeSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            SettingsSectionHeader(title: title)
+
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+}
 
 @ViewBuilder
 private func providerFootnotes(_ notes: [String?]) -> some View {

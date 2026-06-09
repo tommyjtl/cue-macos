@@ -249,6 +249,29 @@ struct CuePrototypeTests {
         #expect(request.messages[0].text.contains("Line one"))
     }
 
+    @Test func batchContextMessagesUseOCRScreenshotNoticeWhenConfigured() {
+        let userMessage = ConversationMessageDTO(
+            role: .user,
+            text: "read this",
+            imageAttachments: [
+                ConversationImageAttachmentReference(
+                    id: UUID(),
+                    mimeType: "image/png",
+                    relativePath: "conv/msg/shot.png"
+                )
+            ]
+        )
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: [userMessage],
+            screenshotDeliveryMode: .ocrExtractedText
+        )
+
+        #expect(contextualMessages.count == 1)
+        #expect(contextualMessages[0].text.contains("Text from the screenshot was extracted"))
+        #expect(!contextualMessages[0].text.contains("Image data is included"))
+    }
+
     @Test func conversationContextMessagesDedupesOverlayAndHistoricalContext() {
         let browserPage = BrowserPageContext(
             id: UUID(),

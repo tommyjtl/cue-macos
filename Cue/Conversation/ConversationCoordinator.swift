@@ -128,6 +128,7 @@ final class ConversationCoordinator {
                     markCommand: markCommand,
                     draft: trimmedDraft,
                     configuration: configuration,
+                    ocrImagesForLocalModels: ocrImagesForLocalModels,
                     markExportConfiguration: markExportConfiguration,
                     screenshots: screenshots,
                     selectedTextContexts: selectedTextContexts,
@@ -388,6 +389,7 @@ final class ConversationCoordinator {
         markCommand: MarkCommand.Parsed,
         draft: String,
         configuration: ConversationConfiguration,
+        ocrImagesForLocalModels: Bool,
         markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
@@ -403,10 +405,12 @@ final class ConversationCoordinator {
             return
         }
 
+        let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
         let contextualMessages = ConversationContextMessages.build(
             sessionMessages: session.messages,
             selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
+            browserPageContexts: browserPageContexts,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
         )
 
         guard MarkCommand.hasMarkablePage(
@@ -499,6 +503,8 @@ final class ConversationCoordinator {
                     contextualMessages: contextualMessages,
                     browserPageContexts: browserPageContexts,
                     messageAttachments: messageAttachments,
+                    usesImageOCR: usesImageOCR,
+                    onStatus: setStatus,
                     onDebugLog: onDebugLog
                 )
 
@@ -758,24 +764,12 @@ final class ConversationCoordinator {
             usesImageOCR: usesImageOCR
         )
 
-        guard usesImageOCR, !messageAttachments.isEmpty else {
-            return ConversationRequestDTO(
-                systemPrompt: systemPrompt,
-                messages: requestMessages,
-                messageAttachments: messageAttachments
-            )
-        }
-
-        setStatus("Extracting text from images...")
-        let ocrTextsByMessageID = try await ConversationRequestOCRPreprocessor.extractOCRTexts(
-            from: messageAttachments
-        )
-
-        return ConversationRequestOCRPreprocessor.apply(
+        return try await ConversationRequestOCRPreprocessor.buildRequest(
             systemPrompt: systemPrompt,
             messages: requestMessages,
             messageAttachments: messageAttachments,
-            ocrTextsByMessageID: ocrTextsByMessageID
+            usesImageOCR: usesImageOCR,
+            onStatus: setStatus
         )
     }
 
@@ -929,10 +923,11 @@ enum ConversationContextMessages {
     nonisolated static func build(
         sessionMessages: [ConversationMessageDTO],
         selectedTextContexts: [AttachedTextContext] = [],
-        browserPageContexts: [BrowserPageContext] = []
+        browserPageContexts: [BrowserPageContext] = [],
+        screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage
     ) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
-        var accumulator = ContextAccumulator(screenshotDeliveryMode: .rawImage)
+        var accumulator = ContextAccumulator(screenshotDeliveryMode: screenshotDeliveryMode)
 
         for message in sessionMessages where message.role == .user {
             accumulator.appendContext(for: message, into: &messages)

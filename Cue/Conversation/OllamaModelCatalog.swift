@@ -16,17 +16,6 @@ enum OllamaThinkingSupport: Hashable {
         }
     }
 
-    var statusDescription: String {
-        switch self {
-        case .unsupported:
-            "No curated thinking support metadata yet."
-        case .toggle:
-            "Supports on or off thinking mode."
-        case .levels:
-            "Supports thinking levels instead of a simple on or off toggle."
-        }
-    }
-
     func normalized(_ mode: OllamaThinkingMode) -> OllamaThinkingMode {
         switch self {
         case .unsupported:

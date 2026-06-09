@@ -37,6 +37,8 @@ struct MarkExportService {
         contextualMessages: [ConversationMessageDTO],
         browserPageContexts: [BrowserPageContext],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
+        usesImageOCR: Bool = false,
+        onStatus: ((String) -> Void)? = nil,
         onDebugLog: ((String) -> Void)? = nil
     ) async throws -> ObsidianNoteWriter.WriteResult {
         if let validationError = markConfiguration.validationError {
@@ -76,17 +78,20 @@ struct MarkExportService {
             at: 0
         )
 
-        let request = ConversationRequestDTO(
-            systemPrompt: Self.generationSystemPrompt(
-                configuration: markConfiguration,
-                userHint: userHint,
-                primaryPage: primaryPage,
-                hasConversation: hasConversation,
-                hasUsableContext: hasUsableContext,
-                defaultSynthesisInstruction: defaultSynthesisInstruction
-            ),
+        let systemPrompt = Self.generationSystemPrompt(
+            configuration: markConfiguration,
+            userHint: userHint,
+            primaryPage: primaryPage,
+            hasConversation: hasConversation,
+            hasUsableContext: hasUsableContext,
+            defaultSynthesisInstruction: defaultSynthesisInstruction
+        )
+        let request = try await ConversationRequestOCRPreprocessor.buildRequest(
+            systemPrompt: systemPrompt,
             messages: requestMessages,
-            messageAttachments: messageAttachments
+            messageAttachments: messageAttachments,
+            usesImageOCR: usesImageOCR,
+            onStatus: onStatus
         )
 
         CommandExportGenerationLogger.logMarkRequest(
