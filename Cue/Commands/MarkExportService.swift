@@ -38,6 +38,7 @@ struct MarkExportService {
         browserPageContexts: [BrowserPageContext],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
         usesImageOCR: Bool = false,
+        imageOCRCache: ImageOCRCache,
         onStatus: ((String) -> Void)? = nil,
         onDebugLog: ((String) -> Void)? = nil
     ) async throws -> ObsidianNoteWriter.WriteResult {
@@ -91,6 +92,7 @@ struct MarkExportService {
             messages: requestMessages,
             messageAttachments: messageAttachments,
             usesImageOCR: usesImageOCR,
+            imageOCRCache: imageOCRCache,
             onStatus: onStatus
         )
 

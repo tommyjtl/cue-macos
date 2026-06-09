@@ -220,6 +220,26 @@ struct CuePrototypeTests {
         #expect(multiple.contains("--- Image 2 ---"))
     }
 
+    @Test func imageOCRCacheReusesPriorAttachmentResults() async throws {
+        let messageID = UUID()
+        let attachmentID = UUID()
+
+        let cache = ImageOCRCache()
+        await cache.storeTextForTesting("cached text", for: attachmentID)
+
+        let attachment = ConversationImageAttachmentDTO(
+            id: attachmentID,
+            mimeType: "image/png",
+            data: Data([0x01])
+        )
+
+        let result = try await cache.extractTextsByMessageID(
+            from: [messageID: [attachment]]
+        )
+
+        #expect(result[messageID] == ["cached text"])
+    }
+
     @Test func conversationRequestOCRPreprocessorReplacesImagePayloadWithText() {
         let messageID = UUID()
         let userMessage = ConversationMessageDTO(

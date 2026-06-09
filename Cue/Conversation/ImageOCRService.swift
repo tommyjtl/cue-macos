@@ -38,17 +38,6 @@ enum ImageOCRFormatting {
 }
 
 enum ImageOCRService {
-    nonisolated static func extractTextBlocks(from attachments: [ConversationImageAttachmentDTO]) async throws -> [String] {
-        var blocks: [String] = []
-        blocks.reserveCapacity(attachments.count)
-
-        for attachment in attachments {
-            blocks.append(try await extractStructuredText(from: attachment.data))
-        }
-
-        return blocks
-    }
-
     nonisolated static func extractStructuredText(from imageData: Data) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
             try performStructuredTextRecognition(on: imageData)
@@ -158,12 +147,46 @@ enum ImageOCRService {
     }
 }
 
+actor ImageOCRCache {
+    private var textsByAttachmentID: [UUID: String] = [:]
+
+    func extractTextsByMessageID(
+        from messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
+    ) async throws -> [UUID: [String]] {
+        var ocrTextsByMessageID: [UUID: [String]] = [:]
+
+        for (messageID, attachments) in messageAttachments where !attachments.isEmpty {
+            var blocks: [String] = []
+            blocks.reserveCapacity(attachments.count)
+
+            for attachment in attachments {
+                if let cached = textsByAttachmentID[attachment.id] {
+                    blocks.append(cached)
+                } else {
+                    let text = try await ImageOCRService.extractStructuredText(from: attachment.data)
+                    textsByAttachmentID[attachment.id] = text
+                    blocks.append(text)
+                }
+            }
+
+            ocrTextsByMessageID[messageID] = blocks
+        }
+
+        return ocrTextsByMessageID
+    }
+
+    func storeTextForTesting(_ text: String, for attachmentID: UUID) {
+        textsByAttachmentID[attachmentID] = text
+    }
+}
+
 enum ConversationRequestOCRPreprocessor {
     static func buildRequest(
         systemPrompt: String,
         messages: [ConversationMessageDTO],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
         usesImageOCR: Bool,
+        imageOCRCache: ImageOCRCache,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> ConversationRequestDTO {
         guard usesImageOCR, !messageAttachments.isEmpty else {
@@ -175,7 +198,7 @@ enum ConversationRequestOCRPreprocessor {
         }
 
         onStatus?("Extracting text from images...")
-        let ocrTextsByMessageID = try await extractOCRTexts(from: messageAttachments)
+        let ocrTextsByMessageID = try await imageOCRCache.extractTextsByMessageID(from: messageAttachments)
         return apply(
             systemPrompt: systemPrompt,
             messages: messages,
@@ -226,17 +249,5 @@ enum ConversationRequestOCRPreprocessor {
             messages: transformedMessages,
             messageAttachments: clearedAttachments
         )
-    }
-
-    nonisolated static func extractOCRTexts(
-        from messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
-    ) async throws -> [UUID: [String]] {
-        var ocrTextsByMessageID: [UUID: [String]] = [:]
-
-        for (messageID, attachments) in messageAttachments where !attachments.isEmpty {
-            ocrTextsByMessageID[messageID] = try await ImageOCRService.extractTextBlocks(from: attachments)
-        }
-
-        return ocrTextsByMessageID
     }
 }

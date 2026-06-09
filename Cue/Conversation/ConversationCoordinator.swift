@@ -19,6 +19,7 @@ final class ConversationCoordinator {
 
     private var conversationTask: Task<Void, Never>?
     private var session = SessionSnapshot()
+    private var imageOCRCache = ImageOCRCache()
 
     init(
         conversationService: ConversationService? = nil,
@@ -57,6 +58,7 @@ final class ConversationCoordinator {
         session.activeConversationID = nil
         session.isConversationInProgress = false
         session.inFlightActivity = .none
+        imageOCRCache = ImageOCRCache()
         publishSession()
     }
 
@@ -68,6 +70,7 @@ final class ConversationCoordinator {
         session.activeConversationID = conversation.id
         session.selectedSavedConversationID = conversation.id
         session.messages = conversation.messages
+        imageOCRCache = ImageOCRCache()
         publishSession()
     }
 
@@ -504,6 +507,7 @@ final class ConversationCoordinator {
                     browserPageContexts: browserPageContexts,
                     messageAttachments: messageAttachments,
                     usesImageOCR: usesImageOCR,
+                    imageOCRCache: imageOCRCache,
                     onStatus: setStatus,
                     onDebugLog: onDebugLog
                 )
@@ -769,6 +773,7 @@ final class ConversationCoordinator {
             messages: requestMessages,
             messageAttachments: messageAttachments,
             usesImageOCR: usesImageOCR,
+            imageOCRCache: imageOCRCache,
             onStatus: setStatus
         )
     }
