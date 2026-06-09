@@ -40,6 +40,7 @@ final class AppModel {
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
         static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
+        static let ocrImagesForLocalModels = AppPreferenceKeys.ocrImagesForLocalModelsKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -48,6 +49,7 @@ final class AppModel {
         case debug
         case permissions
         case general
+        case chat
         case commands
 
         var id: Self { self }
@@ -64,6 +66,8 @@ final class AppModel {
                 "Permissions"
             case .general:
                 "General"
+            case .chat:
+                "Chat"
             case .commands:
                 "Commands"
             }
@@ -81,6 +85,8 @@ final class AppModel {
                 "lock.shield"
             case .general:
                 "slider.horizontal.3"
+            case .chat:
+                "bubble.left.and.bubble.right"
             case .commands:
                 "terminal"
             }
@@ -114,6 +120,7 @@ final class AppModel {
     var hasCompletedOnboarding: Bool = UserDefaults.standard.bool(forKey: UserDefaultsKey.hasCompletedOnboarding)
     var soundEffectsEnabled: Bool
     var hideMainAppOnStart: Bool
+    var ocrImagesForLocalModels: Bool
     var captureShortcut: CaptureShortcut
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
@@ -170,6 +177,7 @@ final class AppModel {
         conversationStore = openedConversationStore
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         hideMainAppOnStart = Self.loadHideMainAppOnStart()
+        ocrImagesForLocalModels = Self.loadOCRImagesForLocalModels()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
@@ -523,6 +531,11 @@ final class AppModel {
         saveHideMainAppOnStart(isEnabled)
     }
 
+    func updateOCRImagesForLocalModels(_ isEnabled: Bool) {
+        ocrImagesForLocalModels = isEnabled
+        saveOCRImagesForLocalModels(isEnabled)
+    }
+
     private var shouldShowMainWindowOnLaunch: Bool {
         if !hasCompletedOnboarding {
             return true
@@ -580,6 +593,7 @@ final class AppModel {
         conversationCoordinator?.send(
             draft: draft,
             configuration: conversationConfiguration,
+            ocrImagesForLocalModels: ocrImagesForLocalModels,
             saveExportConfiguration: saveExportConfiguration,
             markExportConfiguration: markExportConfiguration,
             screenshots: capturedScreenshots,
@@ -872,6 +886,14 @@ final class AppModel {
 
     private func saveHideMainAppOnStart(_ isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.hideMainAppOnStart)
+    }
+
+    private static func loadOCRImagesForLocalModels() -> Bool {
+        AppPreferenceKeys.ocrImagesForLocalModels
+    }
+
+    private func saveOCRImagesForLocalModels(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.ocrImagesForLocalModels)
     }
 
     private func syncOverlayState() {
@@ -1361,239 +1383,4 @@ struct SoundEffectsSettingsSection: View {
         )
     }
 }
-
-struct ConversationSettingsSection: View {
-    @Environment(AppModel.self) private var appState
-    @State private var availableOllamaModels = OllamaModelCatalog.fallbackOptions
-    @State private var isRefreshingOllamaModels = false
-    @State private var ollamaModelsStatus: String?
-
-    private let ollamaModelDiscoveryService = OllamaModelDiscoveryService()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: "Provider")
-
-            SettingsCard {
-                SettingsCardBody {
-                    SettingsFieldGroup(label: "Provider") {
-                        Picker("Provider", selection: appState.conversationConfigurationBinding(for: \.provider)) {
-                            ForEach(ConversationProvider.allCases) { provider in
-                                Text(provider.title).tag(provider)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                    }
-                }
-
-                SettingsRowDivider()
-
-                switch appState.conversationConfiguration.provider {
-                case .ollama:
-                    ollamaProviderCardContent
-                case .openAI:
-                    openAIProviderCardContent
-                }
-            }
-
-            providerFootnotes(outsideCardNotes)
-        }
-        .onAppear {
-            availableOllamaModels = OllamaModelCatalog.mergedOptions(
-                OllamaModelCatalog.fallbackOptions,
-                currentModelName: appState.conversationConfiguration.ollamaModel
-            )
-            normalizeOllamaThinkingMode()
-
-            Task {
-                await refreshOllamaModels()
-            }
-        }
-        .onChange(of: appState.conversationConfiguration.ollamaModel, initial: false) { _, _ in
-            normalizeOllamaThinkingMode()
-        }
-    }
-
-    @ViewBuilder
-    private var ollamaProviderCardContent: some View {
-        SettingsCardBody {
-            SettingsFieldGroup(label: "Base URL") {
-                TextField("http://localhost:11434", text: appState.conversationConfigurationBinding(for: \.ollamaBaseURL))
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            SettingsFieldGroup(label: "Model") {
-                Picker("Model", selection: appState.conversationConfigurationBinding(for: \.ollamaModel)) {
-                    ForEach(availableOllamaModels) { option in
-                        Text(option.pickerTitle).tag(option.modelName)
-                    }
-                }
-                .labelsHidden()
-
-                HStack {
-                    Button(isRefreshingOllamaModels ? "Refreshing..." : "Refresh Models") {
-                        Task {
-                            await refreshOllamaModels()
-                        }
-                    }
-                    .disabled(isRefreshingOllamaModels)
-
-                    Spacer()
-
-                    Text(selectedOllamaModelOption.source == .installed ? "Installed via /api/tags" : "Curated fallback")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            ollamaThinkingControl
-
-            SettingsFieldGroup(label: "API Key") {
-                SecureField("Ollama API Key", text: appState.conversationConfigurationBinding(for: \.ollamaAPIKey))
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-
-        SettingsRowDivider()
-
-        SettingsToggleRow(
-            title: "Web Search",
-            subtitle: webSearchSubtitle,
-            isOn: appState.conversationConfigurationBinding(for: \.ollamaUseWebSearch)
-        )
-    }
-
-    @ViewBuilder
-    private var openAIProviderCardContent: some View {
-        SettingsCardBody {
-            SettingsFieldGroup(label: "Model") {
-                HStack {
-                    TextField("gpt-5.4", text: appState.conversationConfigurationBinding(for: \.openAIModel))
-                        .textFieldStyle(.roundedBorder)
-
-                    SettingsChangeButton("Reset") {
-                        appState.resetConversationConfiguration()
-                    }
-                }
-            }
-
-            SettingsFieldGroup(label: "API Key") {
-                SecureField("OpenAI API Key", text: appState.conversationConfigurationBinding(for: \.openAIAPIKey))
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-
-        SettingsRowDivider()
-
-        SettingsToggleRow(
-            title: "Web Search",
-            subtitle: webSearchSubtitle,
-            isOn: appState.conversationConfigurationBinding(for: \.openAIUseWebSearch)
-        )
-    }
-
-    private var webSearchSubtitle: String {
-        switch appState.conversationConfiguration.provider {
-        case .ollama:
-            "Use Ollama hosted web search and fetch tools for current information."
-        case .openAI:
-            "Use the OpenAI Responses API web search tool for current information."
-        }
-    }
-
-    @ViewBuilder
-    private var ollamaThinkingControl: some View {
-        switch selectedOllamaModelOption.thinkingSupport {
-        case .unsupported:
-            SettingsFieldGroup(label: "Thinking") {
-                Text("Unavailable for this model")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-        case .toggle:
-            SettingsFieldGroup(label: "Thinking") {
-                Toggle("Enable extended reasoning for supported Ollama models.", isOn: ollamaThinkingToggleBinding)
-            }
-        case let .levels(modes):
-            SettingsFieldGroup(label: "Thinking") {
-                Picker("Thinking", selection: appState.conversationConfigurationBinding(for: \.ollamaThinkingMode)) {
-                    ForEach(modes) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .labelsHidden()
-            }
-        }
-    }
-
-    private var outsideCardNotes: [String?] {
-        switch appState.conversationConfiguration.provider {
-        case .ollama:
-            return [
-                "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping.",
-                selectedOllamaModelOption.summary,
-                selectedOllamaModelOption.thinkingSupport.statusDescription,
-                ollamaModelsStatus
-            ]
-        case .openAI:
-            return [
-                "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping."
-            ]
-        }
-    }
-
-    @ViewBuilder
-    private func providerFootnotes(_ notes: [String?]) -> some View {
-        ForEach(notes.compactMap { $0 }.filter { !$0.isEmpty }, id: \.self) { note in
-            SettingsFootnote(note)
-        }
-    }
-
-    private var selectedOllamaModelOption: OllamaModelOption {
-        availableOllamaModels.first(where: { $0.modelName == appState.conversationConfiguration.ollamaModel })
-            ?? OllamaModelCatalog.option(for: appState.conversationConfiguration.ollamaModel, source: .current)
-    }
-
-    private var ollamaThinkingToggleBinding: Binding<Bool> {
-        Binding(
-            get: { appState.conversationConfiguration.ollamaThinkingMode == .on },
-            set: { isEnabled in
-                var configuration = appState.conversationConfiguration
-                configuration.ollamaThinkingMode = isEnabled ? .on : .off
-                appState.updateConversationConfiguration(configuration)
-            }
-        )
-    }
-
-    @MainActor
-    private func refreshOllamaModels() async {
-        isRefreshingOllamaModels = true
-        defer { isRefreshingOllamaModels = false }
-
-        do {
-            let discoveredModels = try await ollamaModelDiscoveryService.fetchAvailableModels(baseURL: appState.conversationConfiguration.ollamaBaseURL)
-            availableOllamaModels = OllamaModelCatalog.mergedOptions(discoveredModels, currentModelName: appState.conversationConfiguration.ollamaModel)
-            ollamaModelsStatus = discoveredModels.isEmpty
-                ? "No installed Ollama models were returned. Showing the current configuration only."
-                : "Loaded \(discoveredModels.count) installed model(s) from Ollama."
-        } catch {
-            availableOllamaModels = OllamaModelCatalog.mergedOptions(OllamaModelCatalog.fallbackOptions, currentModelName: appState.conversationConfiguration.ollamaModel)
-            ollamaModelsStatus = "Could not load installed Ollama models. Showing curated model options instead."
-        }
-
-        normalizeOllamaThinkingMode()
-    }
-
-    private func normalizeOllamaThinkingMode() {
-        var configuration = appState.conversationConfiguration
-        let normalizedMode = selectedOllamaModelOption.thinkingSupport.normalized(configuration.ollamaThinkingMode)
-        guard configuration.ollamaThinkingMode != normalizedMode else {
-            return
-        }
-        configuration.ollamaThinkingMode = normalizedMode
-        appState.updateConversationConfiguration(configuration)
-    }
-}
-
 

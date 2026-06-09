@@ -179,9 +179,74 @@ struct CuePrototypeTests {
         #expect(requestMessages[0].text.contains("Hi Shan"))
         #expect(requestMessages[1].role == .system)
         #expect(requestMessages[1].text.contains("screenshot"))
+        #expect(requestMessages[1].text.contains("Image data is included"))
         #expect(requestMessages[2].id == firstUser.id)
         #expect(requestMessages[3].id == assistant.id)
         #expect(requestMessages[4].id == pendingUser.id)
+    }
+
+    @Test func requestMessagesUseOCRScreenshotNoticeWhenConfigured() {
+        let userMessage = ConversationMessageDTO(
+            role: .user,
+            text: "read this",
+            imageAttachments: [
+                ConversationImageAttachmentReference(
+                    id: UUID(),
+                    mimeType: "image/png",
+                    relativePath: "conv/msg/shot.png"
+                )
+            ]
+        )
+
+        let requestMessages = ConversationContextMessages.buildRequestMessages(
+            sessionMessages: [],
+            pendingUserMessage: userMessage,
+            screenshotDeliveryMode: .ocrExtractedText
+        )
+
+        #expect(requestMessages.count == 2)
+        #expect(requestMessages[0].text.contains("Text from the screenshot was extracted"))
+        #expect(!requestMessages[0].text.contains("Image data is included"))
+    }
+
+    @Test func imageOCRFormattingUsesLightweightReference() {
+        let single = ImageOCRFormatting.attachmentSection(imageCount: 1, extractedBlocks: ["Hello world"])
+        #expect(single.hasPrefix("[Image attached — text extracted below]"))
+        #expect(single.contains("Hello world"))
+
+        let multiple = ImageOCRFormatting.attachmentSection(imageCount: 2, extractedBlocks: ["First", "Second"])
+        #expect(multiple.contains("[2 images attached — text extracted below]"))
+        #expect(multiple.contains("--- Image 1 ---"))
+        #expect(multiple.contains("--- Image 2 ---"))
+    }
+
+    @Test func conversationRequestOCRPreprocessorReplacesImagePayloadWithText() {
+        let messageID = UUID()
+        let userMessage = ConversationMessageDTO(
+            id: messageID,
+            role: .user,
+            text: "what does this say?",
+            imageAttachments: [
+                ConversationImageAttachmentReference(
+                    id: UUID(),
+                    mimeType: "image/png",
+                    relativePath: "conv/msg/shot.png"
+                )
+            ]
+        )
+        let attachment = ConversationImageAttachmentDTO(mimeType: "image/png", data: Data([0x01]))
+
+        let request = ConversationRequestOCRPreprocessor.apply(
+            systemPrompt: "system",
+            messages: [userMessage],
+            messageAttachments: [messageID: [attachment]],
+            ocrTextsByMessageID: [messageID: ["Line one\nLine two"]]
+        )
+
+        #expect(request.attachments(for: messageID).isEmpty)
+        #expect(request.messages[0].text.contains("what does this say?"))
+        #expect(request.messages[0].text.contains("[Image attached — text extracted below]"))
+        #expect(request.messages[0].text.contains("Line one"))
     }
 
     @Test func conversationContextMessagesDedupesOverlayAndHistoricalContext() {
