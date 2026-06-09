@@ -8,6 +8,7 @@
 import CoreGraphics
 import Foundation
 import Testing
+import Vision
 @testable import Cue
 
 struct CuePrototypeTests {
@@ -234,10 +235,26 @@ struct CuePrototypeTests {
         )
 
         let result = try await cache.extractTextsByMessageID(
-            from: [messageID: [attachment]]
+            from: [messageID: [attachment]],
+            automaticallyDetectLanguage: false
         )
 
         #expect(result[messageID] == ["cached text"])
+    }
+
+    @Test func imageOCRRecognitionConfigUsesEnglishWhenAutoDetectDisabled() {
+        let request = VNRecognizeTextRequest()
+        ImageOCRService.configureRecognition(request, automaticallyDetectLanguage: false)
+
+        #expect(request.recognitionLanguages == ["en-US"])
+        #expect(request.automaticallyDetectsLanguage == false)
+    }
+
+    @Test func imageOCRRecognitionConfigEnablesAutoDetectWhenRequested() {
+        let request = VNRecognizeTextRequest()
+        ImageOCRService.configureRecognition(request, automaticallyDetectLanguage: true)
+
+        #expect(request.automaticallyDetectsLanguage == true)
     }
 
     @Test func conversationRequestOCRPreprocessorReplacesImagePayloadWithText() {

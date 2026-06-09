@@ -20,6 +20,7 @@ final class ConversationCoordinator {
     private var conversationTask: Task<Void, Never>?
     private var session = SessionSnapshot()
     private var imageOCRCache = ImageOCRCache()
+    private var lastOCRAutoDetectLanguage: Bool?
 
     init(
         conversationService: ConversationService? = nil,
@@ -58,7 +59,7 @@ final class ConversationCoordinator {
         session.activeConversationID = nil
         session.isConversationInProgress = false
         session.inFlightActivity = .none
-        imageOCRCache = ImageOCRCache()
+        resetImageOCRCache()
         publishSession()
     }
 
@@ -70,7 +71,7 @@ final class ConversationCoordinator {
         session.activeConversationID = conversation.id
         session.selectedSavedConversationID = conversation.id
         session.messages = conversation.messages
-        imageOCRCache = ImageOCRCache()
+        resetImageOCRCache()
         publishSession()
     }
 
@@ -94,6 +95,7 @@ final class ConversationCoordinator {
         draft: String,
         configuration: ConversationConfiguration,
         ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
         saveExportConfiguration: SaveExportConfiguration,
         markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
@@ -132,6 +134,7 @@ final class ConversationCoordinator {
                     draft: trimmedDraft,
                     configuration: configuration,
                     ocrImagesForLocalModels: ocrImagesForLocalModels,
+                    ocrAutoDetectLanguage: ocrAutoDetectLanguage,
                     markExportConfiguration: markExportConfiguration,
                     screenshots: screenshots,
                     selectedTextContexts: selectedTextContexts,
@@ -220,6 +223,7 @@ final class ConversationCoordinator {
                     requestMessages: requestMessages,
                     messageAttachments: messageAttachments,
                     usesImageOCR: usesImageOCR,
+                    automaticallyDetectLanguage: ocrAutoDetectLanguage,
                     hadImageAttachments: hadImageAttachments,
                     setStatus: setStatus
                 )
@@ -393,6 +397,7 @@ final class ConversationCoordinator {
         draft: String,
         configuration: ConversationConfiguration,
         ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
         markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
@@ -497,6 +502,10 @@ final class ConversationCoordinator {
             }
 
             do {
+                if usesImageOCR {
+                    resetImageOCRCacheIfLanguageSettingChanged(ocrAutoDetectLanguage)
+                }
+
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
                 let result = try await markExportService.generateAndSave(
                     userHint: markCommand.userHint,
@@ -507,6 +516,7 @@ final class ConversationCoordinator {
                     browserPageContexts: browserPageContexts,
                     messageAttachments: messageAttachments,
                     usesImageOCR: usesImageOCR,
+                    automaticallyDetectLanguage: ocrAutoDetectLanguage,
                     imageOCRCache: imageOCRCache,
                     onStatus: setStatus,
                     onDebugLog: onDebugLog
@@ -759,9 +769,14 @@ final class ConversationCoordinator {
         requestMessages: [ConversationMessageDTO],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
         usesImageOCR: Bool,
+        automaticallyDetectLanguage: Bool,
         hadImageAttachments: Bool,
         setStatus: @escaping @MainActor (String) -> Void
     ) async throws -> ConversationRequestDTO {
+        if usesImageOCR {
+            resetImageOCRCacheIfLanguageSettingChanged(automaticallyDetectLanguage)
+        }
+
         let systemPrompt = conversationSystemPrompt(
             for: configuration,
             hasAttachments: hadImageAttachments,
@@ -773,9 +788,24 @@ final class ConversationCoordinator {
             messages: requestMessages,
             messageAttachments: messageAttachments,
             usesImageOCR: usesImageOCR,
+            automaticallyDetectLanguage: automaticallyDetectLanguage,
             imageOCRCache: imageOCRCache,
             onStatus: setStatus
         )
+    }
+
+    private func resetImageOCRCache() {
+        imageOCRCache = ImageOCRCache()
+        lastOCRAutoDetectLanguage = nil
+    }
+
+    private func resetImageOCRCacheIfLanguageSettingChanged(_ automaticallyDetectLanguage: Bool) {
+        guard lastOCRAutoDetectLanguage != automaticallyDetectLanguage else {
+            return
+        }
+
+        imageOCRCache = ImageOCRCache()
+        lastOCRAutoDetectLanguage = automaticallyDetectLanguage
     }
 
     private func conversationSystemPrompt(

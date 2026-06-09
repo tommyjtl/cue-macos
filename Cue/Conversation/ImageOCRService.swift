@@ -38,13 +38,36 @@ enum ImageOCRFormatting {
 }
 
 enum ImageOCRService {
-    nonisolated static func extractStructuredText(from imageData: Data) async throws -> String {
+    nonisolated static func extractStructuredText(
+        from imageData: Data,
+        automaticallyDetectLanguage: Bool
+    ) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            try performStructuredTextRecognition(on: imageData)
+            try performStructuredTextRecognition(
+                on: imageData,
+                automaticallyDetectLanguage: automaticallyDetectLanguage
+            )
         }.value
     }
 
-    nonisolated private static func performStructuredTextRecognition(on imageData: Data) throws -> String {
+    nonisolated static func configureRecognition(
+        _ request: VNRecognizeTextRequest,
+        automaticallyDetectLanguage: Bool
+    ) {
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+
+        if automaticallyDetectLanguage {
+            request.automaticallyDetectsLanguage = true
+        } else {
+            request.recognitionLanguages = ["en-US"]
+        }
+    }
+
+    nonisolated private static func performStructuredTextRecognition(
+        on imageData: Data,
+        automaticallyDetectLanguage: Bool
+    ) throws -> String {
         guard let cgImage = cgImage(from: imageData) else {
             throw ImageOCRError.invalidImage
         }
@@ -65,8 +88,7 @@ enum ImageOCRService {
             extractedText = formatObservations(observations)
         }
 
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        configureRecognition(request, automaticallyDetectLanguage: automaticallyDetectLanguage)
 
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
         try handler.perform([request])
@@ -151,7 +173,8 @@ actor ImageOCRCache {
     private var textsByAttachmentID: [UUID: String] = [:]
 
     func extractTextsByMessageID(
-        from messageAttachments: [UUID: [ConversationImageAttachmentDTO]]
+        from messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
+        automaticallyDetectLanguage: Bool
     ) async throws -> [UUID: [String]] {
         var ocrTextsByMessageID: [UUID: [String]] = [:]
 
@@ -163,7 +186,10 @@ actor ImageOCRCache {
                 if let cached = textsByAttachmentID[attachment.id] {
                     blocks.append(cached)
                 } else {
-                    let text = try await ImageOCRService.extractStructuredText(from: attachment.data)
+                    let text = try await ImageOCRService.extractStructuredText(
+                        from: attachment.data,
+                        automaticallyDetectLanguage: automaticallyDetectLanguage
+                    )
                     textsByAttachmentID[attachment.id] = text
                     blocks.append(text)
                 }
@@ -186,6 +212,7 @@ enum ConversationRequestOCRPreprocessor {
         messages: [ConversationMessageDTO],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
         usesImageOCR: Bool,
+        automaticallyDetectLanguage: Bool,
         imageOCRCache: ImageOCRCache,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> ConversationRequestDTO {
@@ -198,7 +225,10 @@ enum ConversationRequestOCRPreprocessor {
         }
 
         onStatus?("Extracting text from images...")
-        let ocrTextsByMessageID = try await imageOCRCache.extractTextsByMessageID(from: messageAttachments)
+        let ocrTextsByMessageID = try await imageOCRCache.extractTextsByMessageID(
+            from: messageAttachments,
+            automaticallyDetectLanguage: automaticallyDetectLanguage
+        )
         return apply(
             systemPrompt: systemPrompt,
             messages: messages,

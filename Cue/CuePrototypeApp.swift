@@ -41,6 +41,7 @@ final class AppModel {
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
         static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
         static let ocrImagesForLocalModels = AppPreferenceKeys.ocrImagesForLocalModelsKey
+        static let ocrAutoDetectLanguage = AppPreferenceKeys.ocrAutoDetectLanguageKey
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -121,6 +122,7 @@ final class AppModel {
     var soundEffectsEnabled: Bool
     var hideMainAppOnStart: Bool
     var ocrImagesForLocalModels: Bool
+    var ocrAutoDetectLanguage: Bool
     var captureShortcut: CaptureShortcut
     var openChatShortcut: CaptureShortcut
     var dismissChatShortcut: DismissChatShortcut
@@ -178,6 +180,7 @@ final class AppModel {
         soundEffectsEnabled = Self.loadSoundEffectsEnabled()
         hideMainAppOnStart = Self.loadHideMainAppOnStart()
         ocrImagesForLocalModels = Self.loadOCRImagesForLocalModels()
+        ocrAutoDetectLanguage = Self.loadOCRAutoDetectLanguage()
         captureShortcut = Self.loadCaptureShortcut()
         openChatShortcut = Self.loadOpenChatShortcut()
         dismissChatShortcut = Self.loadDismissChatShortcut()
@@ -536,6 +539,11 @@ final class AppModel {
         saveOCRImagesForLocalModels(isEnabled)
     }
 
+    func updateOCRAutoDetectLanguage(_ isEnabled: Bool) {
+        ocrAutoDetectLanguage = isEnabled
+        saveOCRAutoDetectLanguage(isEnabled)
+    }
+
     private var shouldShowMainWindowOnLaunch: Bool {
         if !hasCompletedOnboarding {
             return true
@@ -594,6 +602,7 @@ final class AppModel {
             draft: draft,
             configuration: conversationConfiguration,
             ocrImagesForLocalModels: ocrImagesForLocalModels,
+            ocrAutoDetectLanguage: ocrAutoDetectLanguage,
             saveExportConfiguration: saveExportConfiguration,
             markExportConfiguration: markExportConfiguration,
             screenshots: capturedScreenshots,
@@ -894,6 +903,14 @@ final class AppModel {
 
     private func saveOCRImagesForLocalModels(_ isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.ocrImagesForLocalModels)
+    }
+
+    private static func loadOCRAutoDetectLanguage() -> Bool {
+        AppPreferenceKeys.ocrAutoDetectLanguage
+    }
+
+    private func saveOCRAutoDetectLanguage(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: UserDefaultsKey.ocrAutoDetectLanguage)
     }
 
     private func syncOverlayState() {

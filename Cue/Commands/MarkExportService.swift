@@ -38,6 +38,7 @@ struct MarkExportService {
         browserPageContexts: [BrowserPageContext],
         messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
         usesImageOCR: Bool = false,
+        automaticallyDetectLanguage: Bool = false,
         imageOCRCache: ImageOCRCache,
         onStatus: ((String) -> Void)? = nil,
         onDebugLog: ((String) -> Void)? = nil
@@ -92,6 +93,7 @@ struct MarkExportService {
             messages: requestMessages,
             messageAttachments: messageAttachments,
             usesImageOCR: usesImageOCR,
+            automaticallyDetectLanguage: automaticallyDetectLanguage,
             imageOCRCache: imageOCRCache,
             onStatus: onStatus
         )

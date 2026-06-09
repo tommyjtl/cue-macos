@@ -171,11 +171,21 @@ private struct PrivateModeConfigurationSection: View {
                     subtitle: ocrSubtitle,
                     isOn: ocrImagesBinding
                 )
+
+                SettingsRowDivider()
+
+                SettingsToggleRow(
+                    title: "Automatically detect OCR language",
+                    subtitle: ocrAutoDetectLanguageSubtitle,
+                    isOn: ocrAutoDetectLanguageBinding
+                )
+                .disabled(!appState.ocrImagesForLocalModels)
             }
 
             providerFootnotes([
                 "API keys are stored in UserDefaults for the prototype. Move this to Keychain before shipping.",
-                "When OCR is enabled, attached images are run through Apple Vision and sent as structured text instead of raw image data."
+                "When OCR is enabled, attached images are run through Apple Vision and sent as structured text instead of raw image data.",
+                "With automatic language detection off, OCR assumes English only. Turn it on for screenshots in other languages."
             ])
         }
         .onAppear {
@@ -231,6 +241,21 @@ private struct PrivateModeConfigurationSection: View {
         Binding(
             get: { appState.ocrImagesForLocalModels },
             set: { appState.updateOCRImagesForLocalModels($0) }
+        )
+    }
+
+    private var ocrAutoDetectLanguageSubtitle: String {
+        if appState.ocrAutoDetectLanguage {
+            "On — Apple Vision will try to detect the screenshot language."
+        } else {
+            "Off — OCR assumes English only."
+        }
+    }
+
+    private var ocrAutoDetectLanguageBinding: Binding<Bool> {
+        Binding(
+            get: { appState.ocrAutoDetectLanguage },
+            set: { appState.updateOCRAutoDetectLanguage($0) }
         )
     }
 
