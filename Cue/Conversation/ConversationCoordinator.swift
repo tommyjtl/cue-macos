@@ -19,6 +19,8 @@ final class ConversationCoordinator {
 
     private var conversationTask: Task<Void, Never>?
     private var session = SessionSnapshot()
+    private var imageOCRCache = ImageOCRCache()
+    private var lastOCRAutoDetectLanguage: Bool?
 
     init(
         conversationService: ConversationService? = nil,
@@ -57,6 +59,7 @@ final class ConversationCoordinator {
         session.activeConversationID = nil
         session.isConversationInProgress = false
         session.inFlightActivity = .none
+        resetImageOCRCache()
         publishSession()
     }
 
@@ -68,6 +71,7 @@ final class ConversationCoordinator {
         session.activeConversationID = conversation.id
         session.selectedSavedConversationID = conversation.id
         session.messages = conversation.messages
+        resetImageOCRCache()
         publishSession()
     }
 
@@ -90,6 +94,8 @@ final class ConversationCoordinator {
     func send(
         draft: String,
         configuration: ConversationConfiguration,
+        ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
         saveExportConfiguration: SaveExportConfiguration,
         markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
@@ -127,6 +133,8 @@ final class ConversationCoordinator {
                     markCommand: markCommand,
                     draft: trimmedDraft,
                     configuration: configuration,
+                    ocrImagesForLocalModels: ocrImagesForLocalModels,
+                    ocrAutoDetectLanguage: ocrAutoDetectLanguage,
                     markExportConfiguration: markExportConfiguration,
                     screenshots: screenshots,
                     selectedTextContexts: selectedTextContexts,
@@ -170,9 +178,11 @@ final class ConversationCoordinator {
             attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
+        let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
         let requestMessages = ConversationContextMessages.buildRequestMessages(
             sessionMessages: session.messages,
-            pendingUserMessage: userMessage
+            pendingUserMessage: userMessage,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
         )
         let streamingAssistantMessageID = UUID()
 
@@ -205,13 +215,17 @@ final class ConversationCoordinator {
 
             do {
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: requestMessages)
-                let request = ConversationRequestDTO(
-                    systemPrompt: conversationSystemPrompt(
-                        for: configuration,
-                        hasAttachments: !messageAttachments.isEmpty
-                    ),
-                    messages: requestMessages,
-                    messageAttachments: messageAttachments
+                let hadImageAttachments = requestMessages.contains { message in
+                    message.role == .user && !message.imageAttachments.isEmpty
+                }
+                let request = try await buildConversationRequest(
+                    configuration: configuration,
+                    requestMessages: requestMessages,
+                    messageAttachments: messageAttachments,
+                    usesImageOCR: usesImageOCR,
+                    automaticallyDetectLanguage: ocrAutoDetectLanguage,
+                    hadImageAttachments: hadImageAttachments,
+                    setStatus: setStatus
                 )
 
                 let response = try await conversationService.streamResponse(
@@ -382,6 +396,8 @@ final class ConversationCoordinator {
         markCommand: MarkCommand.Parsed,
         draft: String,
         configuration: ConversationConfiguration,
+        ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
         markExportConfiguration: MarkExportConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
@@ -397,10 +413,12 @@ final class ConversationCoordinator {
             return
         }
 
+        let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
         let contextualMessages = ConversationContextMessages.build(
             sessionMessages: session.messages,
             selectedTextContexts: selectedTextContexts,
-            browserPageContexts: browserPageContexts
+            browserPageContexts: browserPageContexts,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
         )
 
         guard MarkCommand.hasMarkablePage(
@@ -484,6 +502,10 @@ final class ConversationCoordinator {
             }
 
             do {
+                if usesImageOCR {
+                    resetImageOCRCacheIfLanguageSettingChanged(ocrAutoDetectLanguage)
+                }
+
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
                 let result = try await markExportService.generateAndSave(
                     userHint: markCommand.userHint,
@@ -493,6 +515,10 @@ final class ConversationCoordinator {
                     contextualMessages: contextualMessages,
                     browserPageContexts: browserPageContexts,
                     messageAttachments: messageAttachments,
+                    usesImageOCR: usesImageOCR,
+                    automaticallyDetectLanguage: ocrAutoDetectLanguage,
+                    imageOCRCache: imageOCRCache,
+                    onStatus: setStatus,
                     onDebugLog: onDebugLog
                 )
 
@@ -738,9 +764,54 @@ final class ConversationCoordinator {
         session.messages.first(where: { $0.id == messageID })?.thinkingText ?? ""
     }
 
+    private func buildConversationRequest(
+        configuration: ConversationConfiguration,
+        requestMessages: [ConversationMessageDTO],
+        messageAttachments: [UUID: [ConversationImageAttachmentDTO]],
+        usesImageOCR: Bool,
+        automaticallyDetectLanguage: Bool,
+        hadImageAttachments: Bool,
+        setStatus: @escaping @MainActor (String) -> Void
+    ) async throws -> ConversationRequestDTO {
+        if usesImageOCR {
+            resetImageOCRCacheIfLanguageSettingChanged(automaticallyDetectLanguage)
+        }
+
+        let systemPrompt = conversationSystemPrompt(
+            for: configuration,
+            hasAttachments: hadImageAttachments,
+            usesImageOCR: usesImageOCR
+        )
+
+        return try await ConversationRequestOCRPreprocessor.buildRequest(
+            systemPrompt: systemPrompt,
+            messages: requestMessages,
+            messageAttachments: messageAttachments,
+            usesImageOCR: usesImageOCR,
+            automaticallyDetectLanguage: automaticallyDetectLanguage,
+            imageOCRCache: imageOCRCache,
+            onStatus: setStatus
+        )
+    }
+
+    private func resetImageOCRCache() {
+        imageOCRCache = ImageOCRCache()
+        lastOCRAutoDetectLanguage = nil
+    }
+
+    private func resetImageOCRCacheIfLanguageSettingChanged(_ automaticallyDetectLanguage: Bool) {
+        guard lastOCRAutoDetectLanguage != automaticallyDetectLanguage else {
+            return
+        }
+
+        imageOCRCache = ImageOCRCache()
+        lastOCRAutoDetectLanguage = automaticallyDetectLanguage
+    }
+
     private func conversationSystemPrompt(
         for configuration: ConversationConfiguration,
-        hasAttachments: Bool
+        hasAttachments: Bool,
+        usesImageOCR: Bool = false
     ) -> String {
         var prompt = """
         You are Cue, a concise assistant helping the user reason about their context.
@@ -770,10 +841,18 @@ final class ConversationCoordinator {
         }
 
         if hasAttachments {
-            prompt += """
+            if usesImageOCR {
+                prompt += """
 
-            When referencing screenshot details, describe what you can directly observe. Use tools only if needed to resolve genuine ambiguity.
-            """
+                Screenshot attachments were converted to extracted text before sending. When the user refers to "the image" or "the screenshot", use that extracted text as the source of truth.
+                When referencing screenshot details, rely on the extracted text provided on the user turn.
+                """
+            } else {
+                prompt += """
+
+                When referencing screenshot details, describe what you can directly observe. Use tools only if needed to resolve genuine ambiguity.
+                """
+            }
         }
 
         return prompt
@@ -847,15 +926,21 @@ final class ConversationCoordinator {
     }
 }
 
+enum ScreenshotDeliveryMode: Equatable {
+    case rawImage
+    case ocrExtractedText
+}
+
 enum ConversationContextMessages {
     /// Context for the live composer: interleave attachment system messages before each user turn
     /// so follow-up questions still see earlier screenshots and selected text.
     nonisolated static func buildRequestMessages(
         sessionMessages: [ConversationMessageDTO],
-        pendingUserMessage: ConversationMessageDTO
+        pendingUserMessage: ConversationMessageDTO,
+        screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage
     ) -> [ConversationMessageDTO] {
         var requestMessages: [ConversationMessageDTO] = []
-        var accumulator = ContextAccumulator()
+        var accumulator = ContextAccumulator(screenshotDeliveryMode: screenshotDeliveryMode)
 
         for message in sessionMessages {
             if message.role == .user {
@@ -873,10 +958,11 @@ enum ConversationContextMessages {
     nonisolated static func build(
         sessionMessages: [ConversationMessageDTO],
         selectedTextContexts: [AttachedTextContext] = [],
-        browserPageContexts: [BrowserPageContext] = []
+        browserPageContexts: [BrowserPageContext] = [],
+        screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage
     ) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
-        var accumulator = ContextAccumulator()
+        var accumulator = ContextAccumulator(screenshotDeliveryMode: screenshotDeliveryMode)
 
         for message in sessionMessages where message.role == .user {
             accumulator.appendContext(for: message, into: &messages)
@@ -904,6 +990,7 @@ enum ConversationContextMessages {
     }
 
     private struct ContextAccumulator {
+        let screenshotDeliveryMode: ScreenshotDeliveryMode
         var seenBrowserURLs = Set<String>()
         var seenSelectedTextKeys = Set<String>()
 
@@ -929,7 +1016,11 @@ enum ConversationContextMessages {
                 )
             }
 
-            appendScreenshotNotice(count: userMessage.imageAttachments.count, into: &messages)
+            appendScreenshotNotice(
+                count: userMessage.imageAttachments.count,
+                deliveryMode: screenshotDeliveryMode,
+                into: &messages
+            )
         }
 
         mutating func appendBrowserPage(
@@ -967,6 +1058,7 @@ enum ConversationContextMessages {
 
         mutating func appendScreenshotNotice(
             count: Int,
+            deliveryMode: ScreenshotDeliveryMode,
             into messages: inout [ConversationMessageDTO]
         ) {
             guard count > 0 else {
@@ -974,11 +1066,18 @@ enum ConversationContextMessages {
             }
 
             let noun = count == 1 ? "screenshot" : "screenshots"
+            let deliveryDescription = switch deliveryMode {
+            case .rawImage:
+                "Image data is included on that user turn"
+            case .ocrExtractedText:
+                "Text from the \(noun) was extracted and included on that user turn"
+            }
+
             messages.append(
                 ConversationMessageDTO(
                     role: .system,
                     text: """
-                    The user attached \(count) \(noun) to the following user message. Image data is included on that user turn—use it when answering questions about that attachment, including in later follow-ups.
+                    The user attached \(count) \(noun) to the following user message. \(deliveryDescription)—use it when answering questions about that attachment, including in later follow-ups.
                     """
                 )
             )
