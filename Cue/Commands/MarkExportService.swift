@@ -236,18 +236,14 @@ struct MarkExportService {
         let hasUserHint = !userHint.isEmpty
         let hasConversation = Self.hasSubstantiveConversation(conversationMessages)
         let hasSelectedText = Self.hasSelectedText(in: contextualMessages)
-        let attachmentContextMessages = MarkExportConversationTranscript.attachmentContextMessages(
-            from: conversationMessages
-        )
         let hasUsableContext = hasConversation || hasSelectedText || contextualMessages.contains { message in
             message.role == .system && message.text.contains("screenshot")
-        } || !attachmentContextMessages.isEmpty
+        }
 
         let transcriptMessages = MarkExportConversationTranscript.messagesForGeneration(
             from: conversationMessages
         )
         var requestMessages = contextualMessages
-        requestMessages.append(contentsOf: attachmentContextMessages)
         requestMessages.append(MarkExportConversationTranscript.generationContextMessage())
         requestMessages.append(contentsOf: transcriptMessages)
 

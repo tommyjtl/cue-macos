@@ -36,31 +36,6 @@ enum MarkExportConversationTranscript {
         )
     }
 
-    static func attachmentContextMessages(from messages: [ConversationMessageDTO]) -> [ConversationMessageDTO] {
-        guard let markMessage = messages.last(where: { message in
-            guard message.role == .user,
-                  !message.imageAttachments.isEmpty else {
-                return false
-            }
-
-            let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return MarkCommand.parse(from: trimmed) != nil
-        }) else {
-            return []
-        }
-
-        let noun = markMessage.imageAttachments.count == 1 ? "screenshot" : "screenshots"
-        return [
-            ConversationMessageDTO(
-                id: markMessage.id,
-                role: .user,
-                text: "Attached \(noun) for this /mark conversation summary.",
-                attachedContextLabels: markMessage.attachedContextLabels,
-                imageAttachments: markMessage.imageAttachments
-            )
-        ]
-    }
-
     static func normalizedTitle(
         parsedTitle: String,
         conversationMessages: [ConversationMessageDTO],
