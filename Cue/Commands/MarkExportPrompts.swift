@@ -37,8 +37,10 @@ Format:
 - Remaining lines: the note body in markdown. Do not include a Tags line or other frontmatter.
 
 Body rules:
+- Read the full user and assistant transcript in the messages below and synthesize it—do not ignore prior turns
 - Open the body with one short plain paragraph summarizing what the user explored with Cue—no heading, before ## Highlights; keep it brief, not a session dump
 - Always include a non-empty ## Highlights section with the main takeaways, answers, or decisions from the exchange
+- Never return only a title line. Never copy the user's first message verbatim as the title
 - Include ## Why I saved this when the user states why this conversation is worth keeping. Omit if you would only repeat metadata or invent motivation
 - Include ## My notes ONLY when the user hint or conversation clearly states a subjective opinion, stance, or framing
 - Do not create empty sections or placeholder headings

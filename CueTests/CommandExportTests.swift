@@ -562,6 +562,63 @@ struct CommandExportTests {
         #expect(decoded.conversationSystemPrompt == MarkExportPrompts.conversationBase)
     }
 
+    @Test func conversationTranscriptMessagesExcludeMarkCommand() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process alongside the main service."),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let transcript = MarkExportConversationTranscript.messagesForGeneration(from: messages)
+
+        #expect(transcript.count == 2)
+        #expect(transcript[0].text == "What is a sidecar?")
+        #expect(transcript[1].text.contains("helper process"))
+    }
+
+    @Test func conversationDigestFallbackIncludesAssistantAnswer() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(
+                role: .assistant,
+                text: """
+                A sidecar is a helper component that runs next to the main service.
+                In Cue, the search sidecar handles retrieval while the app stays lightweight.
+                """
+            ),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let digest = MarkExportConversationTranscript.digestFallback(
+            from: messages,
+            userHint: ""
+        )
+
+        #expect(digest.contains("The user explored this with Cue"))
+        #expect(digest.contains("## Highlights"))
+        #expect(digest.contains("search sidecar"))
+        #expect(!digest.contains("Conversation saved from Cue for later reference."))
+    }
+
+    @Test func conversationTitleNormalizationAvoidsRawUserQuestion() {
+        let messages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "What is a sidecar? A sidecar is a piece of code or a piece of the service system server that doesn't belong to the main service?"
+            ),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper component.")
+        ]
+
+        let title = MarkExportConversationTranscript.normalizedTitle(
+            parsedTitle: messages[0].text,
+            conversationMessages: messages,
+            userHint: ""
+        )
+
+        #expect(title == "What is a sidecar?")
+        #expect(title.count <= 80)
+    }
+
     @Test func resolvedConversationPromptUsesCustomConfiguration() {
         let customPrompt = "Custom conversation mark prompt."
         let configuration = MarkExportConfiguration(

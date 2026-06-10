@@ -29,10 +29,19 @@ enum MarkExportBodySanitizer {
 
     static func ensureMinimumConversationContent(
         _ body: String,
-        userHint: String
+        userHint: String,
+        conversationMessages: [ConversationMessageDTO] = []
     ) -> String {
         if hasSubstantiveContent(body) {
             return body.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let transcriptDigest = MarkExportConversationTranscript.digestFallback(
+            from: conversationMessages,
+            userHint: userHint
+        )
+        if hasSubstantiveContent(transcriptDigest) {
+            return transcriptDigest
         }
 
         return minimumConversationContentFallback(userHint: userHint)

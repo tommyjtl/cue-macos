@@ -240,7 +240,13 @@ struct MarkExportService {
             message.role == .system && message.text.contains("screenshot")
         }
 
-        let requestMessages = contextualMessages + conversationMessages
+        let transcriptMessages = MarkExportConversationTranscript.messagesForGeneration(
+            from: conversationMessages
+        )
+        var requestMessages = contextualMessages
+        requestMessages.append(MarkExportConversationTranscript.generationContextMessage())
+        requestMessages.append(contentsOf: transcriptMessages)
+
         let fallbackTitle = MarkExportModeResolver.conversationFallbackTitle(
             conversationMessages: conversationMessages,
             userHint: userHint
@@ -249,7 +255,8 @@ struct MarkExportService {
             configuration: markConfiguration,
             userHint: userHint,
             hasConversation: hasConversation,
-            hasUsableContext: hasUsableContext
+            hasUsableContext: hasUsableContext,
+            transcriptMessageCount: transcriptMessages.count
         )
         let request = try await ConversationRequestOCRPreprocessor.buildRequest(
             systemPrompt: systemPrompt,
@@ -284,10 +291,19 @@ struct MarkExportService {
             response.message.text,
             fallbackTitle: fallbackTitle
         )
+        generatedContent = MarkGeneratedContentParser.Parsed(
+            title: MarkExportConversationTranscript.normalizedTitle(
+                parsedTitle: generatedContent.title,
+                conversationMessages: conversationMessages,
+                userHint: userHint
+            ),
+            body: generatedContent.body
+        )
 
         let finalizedBody = MarkExportBodySanitizer.ensureMinimumConversationContent(
             generatedContent.body,
-            userHint: userHint
+            userHint: userHint,
+            conversationMessages: conversationMessages
         )
         generatedContent = MarkGeneratedContentParser.Parsed(
             title: generatedContent.title,
@@ -418,7 +434,8 @@ struct MarkExportService {
         configuration: MarkExportConfiguration,
         userHint: String,
         hasConversation: Bool,
-        hasUsableContext: Bool
+        hasUsableContext: Bool,
+        transcriptMessageCount: Int
     ) -> String {
         var prompt = MarkExportPrompts.resolvedConversationPrompt(from: configuration)
 
@@ -428,8 +445,17 @@ struct MarkExportService {
 
         Export mode: conversation summary
         Conversation present: \(hasConversation ? "yes" : "no")
+        Transcript messages included: \(transcriptMessageCount)
         User hint present: \(hasUserHint ? "yes" : "no")
         """
+
+        if hasConversation {
+            prompt += """
+
+            A user and assistant transcript is included after the context messages.
+            Summarize that exchange into the note. Include concrete takeaways from Cue's answer, not just the user's question.
+            """
+        }
 
         if hasUserHint {
             prompt += """
