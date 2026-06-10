@@ -378,7 +378,7 @@ struct MarkExportService {
         hasUsableContext: Bool,
         defaultSynthesisInstruction: MarkExportDefaultSynthesisInstruction.Result?
     ) -> String {
-        var prompt = MarkExportPrompts.resolvedBasePrompt(from: configuration)
+        var prompt = MarkExportPrompts.resolvedPagePrompt(from: configuration)
 
         let hasUserHint = !userHint.isEmpty
         prompt += """
@@ -420,7 +420,7 @@ struct MarkExportService {
         hasConversation: Bool,
         hasUsableContext: Bool
     ) -> String {
-        var prompt = MarkExportPrompts.conversationBase
+        var prompt = MarkExportPrompts.resolvedConversationPrompt(from: configuration)
 
         let hasUserHint = !userHint.isEmpty
         prompt += """

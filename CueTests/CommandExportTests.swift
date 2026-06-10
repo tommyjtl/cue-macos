@@ -514,6 +514,66 @@ struct CommandExportTests {
         #expect(mode == nil)
     }
 
+    @Test func conversationContextBuildOmitsHistoricalWebPagesWhenDisabled() {
+        let messages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "What does this selection mean?",
+                attachedBrowserPages: [
+                    AttachedBrowserPageReference(
+                        url: "https://example.com/added-later",
+                        pageTitle: "Added later",
+                        browserName: "Chrome",
+                        extractedText: "Leaked page body"
+                    )
+                ]
+            )
+        ]
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: messages,
+            selectedTextContexts: [],
+            browserPageContexts: [
+                BrowserPageContext(
+                    id: UUID(),
+                    createdAt: Date(),
+                    url: "https://example.com/stack-page",
+                    pageTitle: "Stack page",
+                    extractedText: "Stack body",
+                    browserName: "Chrome"
+                )
+            ],
+            includeWebPageContext: false
+        )
+
+        #expect(contextualMessages.isEmpty)
+    }
+
+    @Test func markConfigurationDecodesLegacyPayloadWithoutConversationPrompt() throws {
+        let data = try JSONEncoder().encode(
+            MarkExportConfiguration(
+                isEnabled: true,
+                exportFolderPath: "/tmp/mark",
+                systemPrompt: MarkExportPrompts.defaultBase
+            )
+        )
+
+        let decoded = try JSONDecoder().decode(MarkExportConfiguration.self, from: data)
+        #expect(decoded.conversationSystemPrompt == MarkExportPrompts.conversationBase)
+    }
+
+    @Test func resolvedConversationPromptUsesCustomConfiguration() {
+        let customPrompt = "Custom conversation mark prompt."
+        let configuration = MarkExportConfiguration(
+            isEnabled: true,
+            exportFolderPath: "/tmp/mark",
+            systemPrompt: MarkExportPrompts.defaultBase,
+            conversationSystemPrompt: customPrompt
+        )
+
+        #expect(MarkExportPrompts.resolvedConversationPrompt(from: configuration) == customPrompt)
+    }
+
     @Test func markModeUsesPageWhenFirstUserMessageAttachedWebPage() {
         let messages = [
             ConversationMessageDTO(

@@ -48,13 +48,26 @@ Body rules:
 - Do not invent facts not supported by the conversation or attached context
 """
 
-    static func resolvedBasePrompt(from configuration: MarkExportConfiguration) -> String {
+    static func resolvedPagePrompt(from configuration: MarkExportConfiguration) -> String {
         let trimmed = configuration.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultBase : configuration.systemPrompt
     }
 
-    static func isUsingDefaultPrompt(_ configuration: MarkExportConfiguration) -> Bool {
+    static func resolvedConversationPrompt(from configuration: MarkExportConfiguration) -> String {
+        let trimmed = configuration.conversationSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? conversationBase : configuration.conversationSystemPrompt
+    }
+
+    static func isUsingDefaultPagePrompt(_ configuration: MarkExportConfiguration) -> Bool {
         normalized(configuration.systemPrompt) == normalized(defaultBase)
+    }
+
+    static func isUsingDefaultConversationPrompt(_ configuration: MarkExportConfiguration) -> Bool {
+        normalized(configuration.conversationSystemPrompt) == normalized(conversationBase)
+    }
+
+    static func isUsingDefaultPrompt(_ configuration: MarkExportConfiguration) -> Bool {
+        isUsingDefaultPagePrompt(configuration)
     }
 
     static func normalized(_ prompt: String) -> String {

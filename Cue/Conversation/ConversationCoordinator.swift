@@ -433,15 +433,15 @@ final class ConversationCoordinator {
             return
         }
 
-        let contextualBrowserPages = markMode.includesWebPageContext ? browserPageContexts : []
-        let contextualMessages = markMode.includesWebPageContext
-            ? provisionalContextualMessages
-            : ConversationContextMessages.build(
-                sessionMessages: session.messages,
-                selectedTextContexts: selectedTextContexts,
-                browserPageContexts: [],
-                screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
-            )
+        let includeWebPageContext = markMode.includesWebPageContext
+        let contextualBrowserPages = includeWebPageContext ? browserPageContexts : []
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: session.messages,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage,
+            includeWebPageContext: includeWebPageContext
+        )
 
         let contextLabels = attachedContextLabels(
             screenshots: screenshots,
@@ -952,7 +952,10 @@ enum ConversationContextMessages {
         screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage
     ) -> [ConversationMessageDTO] {
         var requestMessages: [ConversationMessageDTO] = []
-        var accumulator = ContextAccumulator(screenshotDeliveryMode: screenshotDeliveryMode)
+        var accumulator = ContextAccumulator(
+            screenshotDeliveryMode: screenshotDeliveryMode,
+            includeWebPageContext: true
+        )
 
         for message in sessionMessages {
             if message.role == .user {
@@ -971,23 +974,29 @@ enum ConversationContextMessages {
         sessionMessages: [ConversationMessageDTO],
         selectedTextContexts: [AttachedTextContext] = [],
         browserPageContexts: [BrowserPageContext] = [],
-        screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage
+        screenshotDeliveryMode: ScreenshotDeliveryMode = .rawImage,
+        includeWebPageContext: Bool = true
     ) -> [ConversationMessageDTO] {
         var messages: [ConversationMessageDTO] = []
-        var accumulator = ContextAccumulator(screenshotDeliveryMode: screenshotDeliveryMode)
+        var accumulator = ContextAccumulator(
+            screenshotDeliveryMode: screenshotDeliveryMode,
+            includeWebPageContext: includeWebPageContext
+        )
 
         for message in sessionMessages where message.role == .user {
             accumulator.appendContext(for: message, into: &messages)
         }
 
-        for page in browserPageContexts.reversed() {
-            accumulator.appendBrowserPage(
-                url: page.url,
-                pageTitle: page.pageTitle,
-                browserName: page.browserName,
-                extractedText: page.extractedText,
-                into: &messages
-            )
+        if includeWebPageContext {
+            for page in browserPageContexts.reversed() {
+                accumulator.appendBrowserPage(
+                    url: page.url,
+                    pageTitle: page.pageTitle,
+                    browserName: page.browserName,
+                    extractedText: page.extractedText,
+                    into: &messages
+                )
+            }
         }
 
         for selectedTextContext in selectedTextContexts.reversed() {
@@ -1003,6 +1012,7 @@ enum ConversationContextMessages {
 
     private struct ContextAccumulator {
         let screenshotDeliveryMode: ScreenshotDeliveryMode
+        let includeWebPageContext: Bool
         var seenBrowserURLs = Set<String>()
         var seenSelectedTextKeys = Set<String>()
 
@@ -1010,14 +1020,16 @@ enum ConversationContextMessages {
             for userMessage: ConversationMessageDTO,
             into messages: inout [ConversationMessageDTO]
         ) {
-            for page in userMessage.attachedBrowserPages {
-                appendBrowserPage(
-                    url: page.url,
-                    pageTitle: page.pageTitle,
-                    browserName: page.browserName,
-                    extractedText: page.extractedText,
-                    into: &messages
-                )
+            if includeWebPageContext {
+                for page in userMessage.attachedBrowserPages {
+                    appendBrowserPage(
+                        url: page.url,
+                        pageTitle: page.pageTitle,
+                        browserName: page.browserName,
+                        extractedText: page.extractedText,
+                        into: &messages
+                    )
+                }
             }
 
             for selectedText in userMessage.attachedSelectedTexts {

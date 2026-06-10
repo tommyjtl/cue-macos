@@ -634,6 +634,12 @@ final class AppModel {
         updateMarkExportConfiguration(configuration)
     }
 
+    func resetMarkExportConversationSystemPrompt() {
+        var configuration = markExportConfiguration
+        configuration.conversationSystemPrompt = MarkExportPrompts.conversationBase
+        updateMarkExportConfiguration(configuration)
+    }
+
     func resetObsidianNoteSystemPrompt() {}
 
     func updateSaveExportConfiguration(_ configuration: SaveExportConfiguration) {

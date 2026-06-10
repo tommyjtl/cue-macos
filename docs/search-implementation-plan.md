@@ -2,6 +2,8 @@
 
 **Branch:** `feat/agentic-search-bookmarks` — prototypes only; not shipping in the main app release until validated.
 
+**Python prototype repo:** `~/Documents/Projects/cue-agentic-backend-prototype` (`cue-search` package).
+
 Search saved notes from the Cue composer: user asks a question, Cue chat shows a short excerpt answer and **Open in Obsidian** links per source note.
 
 ---
