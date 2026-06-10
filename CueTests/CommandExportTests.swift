@@ -993,4 +993,76 @@ struct CommandExportTests {
         #expect(capture?.extractedText == "Oldest captured body.")
         #expect(capture?.capturedAt == oldest.createdAt)
     }
+
+    // MARK: - Search command
+
+    @Test func searchCommandMatchesBareKeyword() {
+        #expect(SearchCommand.parse(from: "/search")?.query == "")
+        #expect(SearchCommand.parse(from: "  /search  ")?.query == "")
+    }
+
+    @Test func searchCommandMatchesWithQuery() {
+        #expect(SearchCommand.parse(from: "/search what did I save about MLX?")?.query == "what did I save about MLX?")
+    }
+
+    @Test func searchCommandRejectsPartialKeywordMatches() {
+        #expect(SearchCommand.parse(from: "/searching notes") == nil)
+        #expect(SearchCommand.parse(from: "please /search later") == nil)
+    }
+
+    @Test func registryParsesSearchCommand() {
+        if case let .search(parsed) = ComposerCommandRegistry.parse(from: "/search mlx agents") {
+            #expect(parsed.query == "mlx agents")
+        } else {
+            Issue.record("Expected search command")
+        }
+    }
+
+    @Test func searchResultMessageRoundTripPreservesSources() {
+        let sources = [
+            SearchResultSource(
+                filePath: "/tmp/note.md",
+                title: "MLX Agents",
+                excerpt: "Local stack overview.",
+                section: "Highlights"
+            )
+        ]
+        let message = SearchResultMessage.messageText(answer: "You saved one note.", sources: sources)
+        let parsed = SearchResultMessage.parse(from: message)
+
+        #expect(parsed?.answer == "You saved one note.")
+        #expect(parsed?.sources == sources)
+    }
+
+    @Test func searchConfigurationRequiresAgentModeAndMarkFolder() {
+        let disabled = SearchConfiguration(isAgentModeEnabled: false)
+        let mark = MarkExportConfiguration(isEnabled: true, exportFolderPath: "/tmp/bookmarks")
+
+        #expect(disabled.validationError(markConfiguration: mark)?.contains("Agent mode") == true)
+
+        let enabled = SearchConfiguration(isAgentModeEnabled: true)
+        let missingFolder = MarkExportConfiguration(isEnabled: false, exportFolderPath: "")
+
+        #expect(enabled.validationError(markConfiguration: missingFolder)?.contains("Mark with /mark") == true)
+    }
+
+    @Test func searchSidecarLLMConfigurationMapsConversationSettings() {
+        var configuration = ConversationConfiguration.defaultValue
+        configuration.provider = .ollama
+        configuration.ollamaBaseURL = "http://localhost:11434"
+        configuration.ollamaModel = "gemma4:e4b-mlx"
+
+        let mapped = SearchSidecarLLMConfiguration(configuration: configuration)
+        #expect(mapped.provider == "ollama")
+        #expect(mapped.baseURL == "http://localhost:11434")
+        #expect(mapped.model == "gemma4:e4b-mlx")
+    }
+
+    @Test func searchSidecarIndexRequestEncodesCorpusRoot() throws {
+        let request = SearchSidecarIndexRequest(corpusRoot: "/tmp/bookmarks")
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["corpus_root"] as? String == "/tmp/bookmarks")
+    }
 }

@@ -13,6 +13,7 @@ final class ConversationCoordinator {
 
     private let conversationService: ConversationService
     private let markExportService: MarkExportService
+    private let searchSidecarClient: SearchSidecarClient
     private let conversationStore: ConversationStore?
     private let messageAttachmentStore: MessageAttachmentStore
     private let onSessionChange: @MainActor (SessionSnapshot) -> Void
@@ -25,12 +26,14 @@ final class ConversationCoordinator {
     init(
         conversationService: ConversationService? = nil,
         markExportService: MarkExportService? = nil,
+        searchSidecarClient: SearchSidecarClient? = nil,
         conversationStore: ConversationStore?,
         messageAttachmentStore: MessageAttachmentStore? = nil,
         onSessionChange: @escaping @MainActor (SessionSnapshot) -> Void
     ) {
         self.conversationService = conversationService ?? ConversationService()
         self.markExportService = markExportService ?? MarkExportService()
+        self.searchSidecarClient = searchSidecarClient ?? SearchSidecarClient()
         self.conversationStore = conversationStore
         self.messageAttachmentStore = messageAttachmentStore ?? MessageAttachmentStore()
         self.onSessionChange = onSessionChange
@@ -98,6 +101,7 @@ final class ConversationCoordinator {
         ocrAutoDetectLanguage: Bool,
         saveExportConfiguration: SaveExportConfiguration,
         markExportConfiguration: MarkExportConfiguration,
+        searchConfiguration: SearchConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -136,6 +140,7 @@ final class ConversationCoordinator {
                     ocrImagesForLocalModels: ocrImagesForLocalModels,
                     ocrAutoDetectLanguage: ocrAutoDetectLanguage,
                     markExportConfiguration: markExportConfiguration,
+                    searchConfiguration: searchConfiguration,
                     screenshots: screenshots,
                     selectedTextContexts: selectedTextContexts,
                     browserPageContexts: browserPageContexts,
@@ -143,6 +148,20 @@ final class ConversationCoordinator {
                     setError: setError,
                     syncPanel: syncPanel,
                     onDebugLog: onDebugLog
+                )
+            case let .search(searchCommand):
+                sendSearch(
+                    searchCommand: searchCommand,
+                    draft: trimmedDraft,
+                    configuration: configuration,
+                    searchConfiguration: searchConfiguration,
+                    markExportConfiguration: markExportConfiguration,
+                    screenshots: screenshots,
+                    selectedTextContexts: selectedTextContexts,
+                    browserPageContexts: browserPageContexts,
+                    setStatus: setStatus,
+                    setError: setError,
+                    syncPanel: syncPanel
                 )
             }
             return
@@ -392,6 +411,109 @@ final class ConversationCoordinator {
         syncPanel()
     }
 
+    private func sendSearch(
+        searchCommand: SearchCommand.Parsed,
+        draft: String,
+        configuration: ConversationConfiguration,
+        searchConfiguration: SearchConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
+        screenshots: [CapturedScreenshot],
+        selectedTextContexts: [AttachedTextContext],
+        browserPageContexts: [BrowserPageContext],
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void
+    ) {
+        if let validationError = searchConfiguration.validationError(markConfiguration: markExportConfiguration) {
+            setError(validationError)
+            setStatus("Search is not configured.")
+            return
+        }
+
+        guard !searchCommand.query.isEmpty else {
+            setError("Add a search query after /search.")
+            setStatus("Search query is empty.")
+            return
+        }
+
+        guard let sidecarBaseURL = searchConfiguration.sidecarBaseURLValue,
+              let corpusURL = markExportConfiguration.exportFolderURL else {
+            setError("Search is not configured.")
+            setStatus("Search is not configured.")
+            return
+        }
+
+        let contextLabels = attachedContextLabels(
+            screenshots: screenshots,
+            selectedTextContexts: selectedTextContexts,
+            browserPageContexts: browserPageContexts
+        )
+
+        let conversationID = ensureActiveConversationID()
+        let userMessage = ConversationMessageDTO(
+            role: .user,
+            text: draft,
+            attachedContextLabels: contextLabels
+        )
+
+        session.messages.append(userMessage)
+        persistConversationSnapshot(conversationID: conversationID, setError: setError)
+        session.isConversationInProgress = true
+        session.inFlightActivity = .searchingNotes
+        publishSession()
+        setError(nil)
+        syncPanel()
+        setStatus("Searching saved notes…")
+
+        cancelTask()
+        conversationTask = Task { @MainActor in
+            defer {
+                conversationTask = nil
+                session.isConversationInProgress = false
+                session.inFlightActivity = .none
+                publishSession()
+                syncPanel()
+            }
+
+            do {
+                _ = try await searchSidecarClient.health(baseURL: sidecarBaseURL)
+
+                let response = try await searchSidecarClient.search(
+                    baseURL: sidecarBaseURL,
+                    request: SearchSidecarRequest(
+                        query: searchCommand.query,
+                        corpusRoot: corpusURL.path,
+                        llm: SearchSidecarLLMConfiguration(configuration: configuration),
+                        maxSources: 5
+                    )
+                )
+
+                let sources = response.sources.map(\.resultSource)
+                session.messages.append(
+                    ConversationMessageDTO(
+                        role: .assistant,
+                        text: SearchResultMessage.messageText(
+                            answer: response.answer,
+                            sources: sources
+                        )
+                    )
+                )
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setStatus("Search completed.")
+            } catch is CancellationError {
+                setStatus("Search cancelled.")
+            } catch {
+                let message = error.localizedDescription
+                session.messages.append(ConversationMessageDTO(role: .system, text: message))
+                persistConversationSnapshot(conversationID: conversationID, setError: setError)
+                publishSession()
+                setError(message)
+                setStatus("Search failed.")
+            }
+        }
+    }
+
     private func sendMarkExport(
         markCommand: MarkCommand.Parsed,
         draft: String,
@@ -399,6 +521,7 @@ final class ConversationCoordinator {
         ocrImagesForLocalModels: Bool,
         ocrAutoDetectLanguage: Bool,
         markExportConfiguration: MarkExportConfiguration,
+        searchConfiguration: SearchConfiguration,
         screenshots: [CapturedScreenshot],
         selectedTextContexts: [AttachedTextContext],
         browserPageContexts: [BrowserPageContext],
@@ -543,6 +666,12 @@ final class ConversationCoordinator {
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
                 setStatus("Saved bookmark \"\(result.title)\".")
+                syncSearchIndexAfterMarkIfNeeded(
+                    bookmarkTitle: result.title,
+                    searchConfiguration: searchConfiguration,
+                    markExportConfiguration: markExportConfiguration,
+                    setStatus: setStatus
+                )
             } catch is CancellationError {
                 setStatus("Mark export cancelled.")
             } catch {
@@ -552,6 +681,37 @@ final class ConversationCoordinator {
                 publishSession()
                 setError(message)
                 setStatus("Mark export failed.")
+            }
+        }
+    }
+
+    private func syncSearchIndexAfterMarkIfNeeded(
+        bookmarkTitle: String,
+        searchConfiguration: SearchConfiguration,
+        markExportConfiguration: MarkExportConfiguration,
+        setStatus: @escaping @MainActor (String) -> Void
+    ) {
+        guard searchConfiguration.isAgentModeEnabled,
+              searchConfiguration.validationError(
+                  markConfiguration: markExportConfiguration,
+                  disabledMessage: ""
+              ) == nil,
+              let baseURL = searchConfiguration.sidecarBaseURLValue,
+              let corpusURL = markExportConfiguration.exportFolderURL else {
+            return
+        }
+
+        Task {
+            do {
+                let response = try await searchSidecarClient.syncIndex(
+                    baseURL: baseURL,
+                    corpusRoot: corpusURL.path
+                )
+                await MainActor.run {
+                    setStatus("Saved bookmark \"\(bookmarkTitle)\". Search index updated (\(response.chunksIndexed) chunks).")
+                }
+            } catch {
+                // Mark export already succeeded; index sync is best-effort.
             }
         }
     }

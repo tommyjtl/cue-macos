@@ -446,7 +446,9 @@ private struct ConversationMessageBubble: View {
                 processBlockView(for: block)
             }
 
-            if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
+            if let parsedSearch = SearchResultMessage.parse(from: message.text) {
+                SearchResultMessageView(answer: parsedSearch.answer, sources: parsedSearch.sources)
+            } else if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
                 Text("Saved to Obsidian.")
                     .font(.body)
                     .textSelection(.enabled)

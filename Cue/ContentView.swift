@@ -484,7 +484,9 @@ private struct MainWindowConversationBubble: View {
                 processBlockView(for: block)
             }
 
-            if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
+            if let parsedSearch = SearchResultMessage.parse(from: message.text) {
+                SearchResultMessageView(answer: parsedSearch.answer, sources: parsedSearch.sources)
+            } else if let savedNoteFileURL = ObsidianSavedNoteMessage.savedNoteFileURL(from: message.text) {
                 Text("Saved to Obsidian.")
                     .textSelection(.enabled)
 
@@ -565,7 +567,7 @@ private struct AppSidebar: View {
     @Binding var selectedSection: AppModel.SidebarSection?
 
     private let primarySections: [AppModel.SidebarSection] = [.inbox, .recents]
-    private let settingsSections: [AppModel.SidebarSection] = [.general, .chat, .permissions, .commands]
+    private let settingsSections: [AppModel.SidebarSection] = [.general, .chat, .commands, .permissions]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

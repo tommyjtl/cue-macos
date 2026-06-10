@@ -4,12 +4,13 @@ enum ComposerInFlightActivity: Equatable, Sendable {
     case none
     case exportingConversation
     case generatingBookmark(preset: MarkExportDefaultSynthesisInstruction.PresetGeneratingContext?)
+    case searchingNotes
 
     var showsStatusBox: Bool {
         switch self {
         case .none:
             false
-        case .exportingConversation, .generatingBookmark:
+        case .exportingConversation, .generatingBookmark, .searchingNotes:
             true
         }
     }
@@ -22,6 +23,8 @@ enum ComposerInFlightActivity: Equatable, Sendable {
             "Saving conversation"
         case .generatingBookmark:
             "Generating bookmark"
+        case .searchingNotes:
+            "Searching notes"
         }
     }
 
@@ -37,6 +40,8 @@ enum ComposerInFlightActivity: Equatable, Sendable {
             } else {
                 "Cue is writing a markdown bookmark for this page."
             }
+        case .searchingNotes:
+            "Querying your saved bookmarks through cue-search."
         }
     }
 

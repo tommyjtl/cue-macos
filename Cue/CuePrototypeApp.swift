@@ -37,6 +37,7 @@ final class AppModel {
         static let obsidianExportConfiguration = "obsidian-export-configuration"
         static let saveExportConfiguration = "save-export-configuration"
         static let markExportConfiguration = "mark-export-configuration"
+        static let searchConfiguration = "search-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
         static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
@@ -129,6 +130,7 @@ final class AppModel {
     var conversationConfiguration: ConversationConfiguration
     var saveExportConfiguration: SaveExportConfiguration
     var markExportConfiguration: MarkExportConfiguration
+    var searchConfiguration: SearchConfiguration
 
     var obsidianExportConfiguration: SaveExportConfiguration {
         get { saveExportConfiguration }
@@ -187,6 +189,7 @@ final class AppModel {
         conversationConfiguration = Self.loadConversationConfiguration()
         saveExportConfiguration = Self.loadSaveExportConfiguration()
         markExportConfiguration = Self.loadMarkExportConfiguration()
+        searchConfiguration = Self.loadSearchConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
             self?.applyContextSnapshot(snapshot)
         }
@@ -608,6 +611,7 @@ final class AppModel {
             ocrAutoDetectLanguage: ocrAutoDetectLanguage,
             saveExportConfiguration: saveExportConfiguration,
             markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
             screenshots: capturedScreenshots,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
@@ -652,6 +656,11 @@ final class AppModel {
         saveMarkExportConfiguration(configuration)
     }
 
+    func updateSearchConfiguration(_ configuration: SearchConfiguration) {
+        searchConfiguration = configuration
+        saveSearchConfiguration(configuration)
+    }
+
     func updateObsidianExportConfiguration(_ configuration: SaveExportConfiguration) {
         updateSaveExportConfiguration(configuration)
     }
@@ -684,6 +693,22 @@ final class AppModel {
                 }
                 configuration[keyPath: keyPath] = newValue
                 self.updateMarkExportConfiguration(configuration)
+            }
+        )
+    }
+
+    func searchConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SearchConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        Binding(
+            get: { self.searchConfiguration[keyPath: keyPath] },
+            set: { newValue in
+                var configuration = self.searchConfiguration
+                guard configuration[keyPath: keyPath] != newValue else {
+                    return
+                }
+                configuration[keyPath: keyPath] = newValue
+                self.updateSearchConfiguration(configuration)
             }
         )
     }
@@ -883,6 +908,26 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.markExportConfiguration)
+    }
+
+    private static func loadSearchConfiguration() -> SearchConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.searchConfiguration) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(SearchConfiguration.self, from: data)
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveSearchConfiguration(_ configuration: SearchConfiguration) {
+        guard let data = try? JSONEncoder().encode(configuration) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.searchConfiguration)
     }
 
     func resetConversationConfiguration() {
