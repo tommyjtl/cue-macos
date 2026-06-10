@@ -576,6 +576,55 @@ struct CommandExportTests {
         #expect(transcript[1].text.contains("helper process"))
     }
 
+    @Test func conversationGenerationRequestIncludesMarkTurnScreenshotMessage() {
+        let messageID = UUID()
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process."),
+            ConversationMessageDTO(
+                id: messageID,
+                role: .user,
+                text: "/mark architecture diagram",
+                imageAttachments: [
+                    ConversationImageAttachmentReference(
+                        id: UUID(),
+                        mimeType: "image/png",
+                        relativePath: "screenshots/test.png"
+                    )
+                ]
+            )
+        ]
+
+        let requestMessages = MarkExportConversationTranscript.generationRequestMessages(
+            contextualMessages: [],
+            conversationMessages: messages,
+            userHint: "architecture diagram"
+        )
+
+        #expect(!requestMessages.contains { $0.text == "/mark architecture diagram" })
+        #expect(requestMessages.contains { $0.role == .system && $0.text.contains("Cue conversation to summarize") })
+
+        let markTurnMessage = requestMessages.last
+        #expect(markTurnMessage?.id == messageID)
+        #expect(markTurnMessage?.text == "architecture diagram")
+        #expect(markTurnMessage?.imageAttachments.count == 1)
+    }
+
+    @Test func conversationMarkTurnAttachmentMessageRequiresScreenshots() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process."),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        #expect(
+            MarkExportConversationTranscript.markTurnAttachmentMessage(
+                from: messages,
+                userHint: ""
+            ) == nil
+        )
+    }
+
     @Test func conversationDigestFallbackIncludesAssistantAnswer() {
         let messages = [
             ConversationMessageDTO(role: .user, text: "What is a sidecar?"),

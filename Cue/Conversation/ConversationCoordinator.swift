@@ -613,7 +613,7 @@ final class ConversationCoordinator {
             nil
         }
 
-        session.inFlightActivity = .generatingBookmark(preset: presetGeneratingContext)
+        session.inFlightActivity = .generatingBookmark(preset: presetGeneratingContext, mode: markMode)
         publishSession()
         if presetGeneratingContext != nil {
             setStatus("Writing bookmark with \(configuration.providerDisplayName) using a Cue preset...")

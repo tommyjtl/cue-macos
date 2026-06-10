@@ -36,6 +36,57 @@ enum MarkExportConversationTranscript {
         )
     }
 
+    static func generationRequestMessages(
+        contextualMessages: [ConversationMessageDTO],
+        conversationMessages: [ConversationMessageDTO],
+        userHint: String
+    ) -> [ConversationMessageDTO] {
+        let transcriptMessages = messagesForGeneration(from: conversationMessages)
+        var requestMessages = contextualMessages
+        requestMessages.append(generationContextMessage())
+        requestMessages.append(contentsOf: transcriptMessages)
+        if let markTurnMessage = markTurnAttachmentMessage(
+            from: conversationMessages,
+            userHint: userHint
+        ) {
+            requestMessages.append(markTurnMessage)
+        }
+        return requestMessages
+    }
+
+    /// User message for the current /mark turn when it carries composer screenshots.
+    /// The command text is excluded from the transcript, but attachments must stay on a user
+    /// message with the same ID so OCR and raw-image delivery can resolve them.
+    static func markTurnAttachmentMessage(
+        from messages: [ConversationMessageDTO],
+        userHint: String
+    ) -> ConversationMessageDTO? {
+        guard let lastUserMessage = messages.last(where: { $0.role == .user }) else {
+            return nil
+        }
+
+        let trimmedCommand = lastUserMessage.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard MarkCommand.parse(from: trimmedCommand) != nil else {
+            return nil
+        }
+
+        guard !lastUserMessage.imageAttachments.isEmpty else {
+            return nil
+        }
+
+        let displayText = userHint.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return ConversationMessageDTO(
+            id: lastUserMessage.id,
+            role: .user,
+            text: displayText,
+            attachedContextLabels: lastUserMessage.attachedContextLabels,
+            attachedBrowserPages: lastUserMessage.attachedBrowserPages,
+            attachedSelectedTexts: lastUserMessage.attachedSelectedTexts,
+            imageAttachments: lastUserMessage.imageAttachments
+        )
+    }
+
     static func normalizedTitle(
         parsedTitle: String,
         conversationMessages: [ConversationMessageDTO],
