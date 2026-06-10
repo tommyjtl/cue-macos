@@ -576,6 +576,37 @@ struct CommandExportTests {
         #expect(transcript[1].text.contains("helper process"))
     }
 
+    @Test func conversationMarkPreservesCurrentCommandScreenshotContext() {
+        let markMessageID = UUID()
+        let attachment = ConversationImageAttachmentReference(
+            id: UUID(),
+            mimeType: "image/png",
+            relativePath: "conversation/message/screenshot.png"
+        )
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What does this screenshot show?"),
+            ConversationMessageDTO(role: .assistant, text: "It shows the important constraint."),
+            ConversationMessageDTO(
+                id: markMessageID,
+                role: .user,
+                text: "/mark",
+                attachedContextLabels: ["Screenshot"],
+                imageAttachments: [attachment]
+            )
+        ]
+
+        let transcript = MarkExportConversationTranscript.messagesForGeneration(from: messages)
+        let attachmentContext = MarkExportConversationTranscript.attachmentContextMessages(from: messages)
+
+        #expect(transcript.count == 2)
+        #expect(!transcript.contains { $0.text == "/mark" })
+        #expect(attachmentContext.count == 1)
+        #expect(attachmentContext[0].id == markMessageID)
+        #expect(attachmentContext[0].text.contains("screenshot"))
+        #expect(!attachmentContext[0].text.contains("/mark"))
+        #expect(attachmentContext[0].imageAttachments == [attachment])
+    }
+
     @Test func conversationDigestFallbackIncludesAssistantAnswer() {
         let messages = [
             ConversationMessageDTO(role: .user, text: "What is a sidecar?"),

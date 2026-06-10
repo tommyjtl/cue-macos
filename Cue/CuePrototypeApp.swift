@@ -453,9 +453,7 @@ final class AppModel {
 
     func resumeSavedConversation(_ conversationID: UUID) {
         conversationCoordinator?.resumeConversation(conversationID)
-        capturedScreenshots.removeAll()
-        selectedTextContexts.removeAll()
-        browserPageContexts.removeAll()
+        contextSession?.clear()
         activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
         syncOverlayState()
