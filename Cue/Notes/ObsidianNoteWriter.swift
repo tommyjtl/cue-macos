@@ -18,6 +18,7 @@ struct ObsidianNoteWriter {
     enum ExportKind: Equatable {
         case saveConversation
         case markPage(host: String)
+        case markConversation
     }
 
     struct Reference: Equatable {
@@ -111,7 +112,7 @@ struct ObsidianNoteWriter {
             switch exportKind {
             case .saveConversation:
                 return "note.md"
-            case .markPage:
+            case .markPage, .markConversation:
                 return "mark.md"
             }
         }
@@ -121,7 +122,7 @@ struct ObsidianNoteWriter {
             switch exportKind {
             case .saveConversation:
                 return "note.md"
-            case .markPage:
+            case .markPage, .markConversation:
                 return "mark.md"
             }
         }
@@ -129,7 +130,7 @@ struct ObsidianNoteWriter {
         switch exportKind {
         case .saveConversation:
             return "\(String(sanitized.prefix(120))).md"
-        case .markPage:
+        case .markPage, .markConversation:
             return "\(String(sanitized.prefix(80))).md"
         }
     }
@@ -162,7 +163,7 @@ struct ObsidianNoteWriter {
         switch exportKind {
         case .saveConversation:
             tagValues = tags ?? ["cue", "save"]
-        case .markPage:
+        case .markPage, .markConversation:
             tagValues = tags ?? [MarkExportTagVocabulary.systemTag]
         }
         let tagsLine = "[\(tagValues.joined(separator: ", "))]"
@@ -188,7 +189,7 @@ struct ObsidianNoteWriter {
         switch exportKind {
         case .saveConversation:
             noteBody = appendReferencesSection(to: body, references: references)
-        case .markPage:
+        case .markPage, .markConversation:
             noteBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let trimmedBody = noteBody.trimmingCharacters(in: .whitespacesAndNewlines)

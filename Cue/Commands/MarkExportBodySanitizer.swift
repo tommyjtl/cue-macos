@@ -24,7 +24,18 @@ enum MarkExportBodySanitizer {
             return body.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        return minimumContentFallback(primaryPage: primaryPage, userHint: userHint)
+        return minimumPageContentFallback(primaryPage: primaryPage, userHint: userHint)
+    }
+
+    static func ensureMinimumConversationContent(
+        _ body: String,
+        userHint: String
+    ) -> String {
+        if hasSubstantiveContent(body) {
+            return body.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return minimumConversationContentFallback(userHint: userHint)
     }
 
     static func hasSubstantiveContent(_ body: String) -> Bool {
@@ -44,7 +55,19 @@ enum MarkExportBodySanitizer {
         return false
     }
 
-    private static func minimumContentFallback(
+    private static func minimumConversationContentFallback(userHint: String) -> String {
+        var bullets = ["Conversation saved from Cue for later reference."]
+
+        let trimmedHint = userHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedHint.isEmpty {
+            bullets.insert("Focus: \(trimmedHint)", at: 0)
+        }
+
+        let bulletLines = bullets.map { "- \($0)" }.joined(separator: "\n")
+        return "## Highlights\n\n\(bulletLines)"
+    }
+
+    private static func minimumPageContentFallback(
         primaryPage: ConversationPageReferences.PageReference,
         userHint: String
     ) -> String {

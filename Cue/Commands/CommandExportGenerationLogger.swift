@@ -2,9 +2,9 @@ import Foundation
 
 enum CommandExportGenerationLogger {
     static func logMarkRequest(
+        mode: MarkExportMode,
         userHint: String,
         configuration: ConversationConfiguration,
-        primaryPage: ConversationPageReferences.PageReference,
         browserPageContexts: [BrowserPageContext],
         contextualMessages: [ConversationMessageDTO],
         conversationMessages: [ConversationMessageDTO],
@@ -20,13 +20,20 @@ enum CommandExportGenerationLogger {
             synthesisLine = "Default synthesis: (none)"
         }
 
+        let modeLine: String = switch mode {
+        case let .page(primaryPage):
+            "Mode: page | Primary page: \(primaryPage.title) | \(primaryPage.url)"
+        case .conversation:
+            "Mode: conversation"
+        }
+
         let lines = [
             "=== Mark Export (/mark) Request ===",
             "Provider: \(configuration.providerDisplayName)",
+            modeLine,
             "User hint: \(userHint.isEmpty ? "(none)" : userHint)",
             synthesisLine,
-            "Usable context (page text or selection): \(hasUsableContext ? "yes" : "no")",
-            "Primary page: \(primaryPage.title) | \(primaryPage.url)",
+            "Usable context: \(hasUsableContext ? "yes" : "no")",
             "Browser pages in context stack: \(browserPageContexts.count)",
             "Contextual system messages: \(contextualMessages.count)",
             "Conversation messages: \(conversationMessages.count)",

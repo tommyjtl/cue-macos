@@ -458,10 +458,13 @@ final class AppModel {
         browserPageContexts.removeAll()
         activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
-        if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
-            buildStatus = "Loaded \(conversation.title)."
-        }
         syncOverlayState()
+        overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
+        overlayCoordinator?.relayout()
+        if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
+            buildStatus = "Loaded \(conversation.title) in the composer."
+        }
     }
 
     private func loadMostRecentConversationIntoOverlay() {

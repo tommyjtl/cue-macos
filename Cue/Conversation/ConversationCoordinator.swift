@@ -414,22 +414,34 @@ final class ConversationCoordinator {
         }
 
         let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
-        let contextualMessages = ConversationContextMessages.build(
+        let provisionalContextualMessages = ConversationContextMessages.build(
             sessionMessages: session.messages,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
             screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
         )
 
-        guard MarkCommand.hasMarkablePage(
+        guard let markMode = MarkExportModeResolver.resolve(
             browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages,
-            conversationMessages: session.messages
+            contextualMessages: provisionalContextualMessages,
+            conversationMessages: session.messages,
+            screenshotCount: screenshots.count,
+            selectedTextContextCount: selectedTextContexts.count
         ) else {
-            setError("Attach a web page before using /mark or //.")
-            setStatus("No page to mark yet.")
+            setError("Send a message, attach context, or attach a web page before using /mark or //.")
+            setStatus("Nothing to mark yet.")
             return
         }
+
+        let contextualBrowserPages = markMode.includesWebPageContext ? browserPageContexts : []
+        let contextualMessages = markMode.includesWebPageContext
+            ? provisionalContextualMessages
+            : ConversationContextMessages.build(
+                sessionMessages: session.messages,
+                selectedTextContexts: selectedTextContexts,
+                browserPageContexts: [],
+                screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
+            )
 
         let contextLabels = attachedContextLabels(
             screenshots: screenshots,
@@ -457,7 +469,7 @@ final class ConversationCoordinator {
             role: .user,
             text: draft,
             attachedContextLabels: contextLabels,
-            attachedBrowserPages: browserPageContexts.map(\.attachedReference),
+            attachedBrowserPages: contextualBrowserPages.map(\.attachedReference),
             attachedSelectedTexts: selectedTextContexts.map(AttachedSelectedTextReference.init(context:)),
             imageAttachments: imageAttachments
         )
@@ -466,17 +478,16 @@ final class ConversationCoordinator {
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
         session.isConversationInProgress = true
 
-        let presetGeneratingContext = ConversationPageReferences.oldestPageReference(
-            browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages,
-            conversationMessages: session.messages
-        ).flatMap { primaryPage in
+        let presetGeneratingContext: MarkExportDefaultSynthesisInstruction.PresetGeneratingContext? = switch markMode {
+        case let .page(primaryPage):
             MarkExportDefaultSynthesisInstruction.resolve(
                 userHint: markCommand.userHint,
                 hasConversation: MarkExportService.hasSubstantiveConversation(session.messages),
                 primaryPage: primaryPage,
                 contextualMessages: contextualMessages
             )?.presetGeneratingContext
+        case .conversation:
+            nil
         }
 
         session.inFlightActivity = .generatingBookmark(preset: presetGeneratingContext)
@@ -508,12 +519,13 @@ final class ConversationCoordinator {
 
                 let messageAttachments = try messageAttachmentStore.resolveMessageAttachments(for: conversationMessages)
                 let result = try await markExportService.generateAndSave(
+                    mode: markMode,
                     userHint: markCommand.userHint,
                     configuration: configuration,
                     markConfiguration: markExportConfiguration,
                     conversationMessages: conversationMessages,
                     contextualMessages: contextualMessages,
-                    browserPageContexts: browserPageContexts,
+                    browserPageContexts: contextualBrowserPages,
                     messageAttachments: messageAttachments,
                     usesImageOCR: usesImageOCR,
                     automaticallyDetectLanguage: ocrAutoDetectLanguage,

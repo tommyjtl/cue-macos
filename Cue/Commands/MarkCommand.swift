@@ -20,15 +20,19 @@ enum MarkCommand {
         return Parsed(matchedKeyword: keyword, userHint: hint)
     }
 
-    static func hasMarkablePage(
+    static func hasMarkableContent(
         browserPageContexts: [BrowserPageContext],
         contextualMessages: [ConversationMessageDTO],
-        conversationMessages: [ConversationMessageDTO]
+        conversationMessages: [ConversationMessageDTO],
+        screenshotCount: Int,
+        selectedTextContextCount: Int
     ) -> Bool {
-        ConversationPageReferences.oldestPageReference(
+        MarkExportModeResolver.resolve(
             browserPageContexts: browserPageContexts,
             contextualMessages: contextualMessages,
-            conversationMessages: conversationMessages
+            conversationMessages: conversationMessages,
+            screenshotCount: screenshotCount,
+            selectedTextContextCount: selectedTextContextCount
         ) != nil
     }
 

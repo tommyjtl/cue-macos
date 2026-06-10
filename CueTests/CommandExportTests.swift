@@ -430,12 +430,119 @@ struct CommandExportTests {
             browserName: "Safari"
         )
         #expect(
-            MarkCommand.hasMarkablePage(
+            MarkCommand.hasMarkableContent(
                 browserPageContexts: [page],
                 contextualMessages: [],
-                conversationMessages: []
+                conversationMessages: [],
+                screenshotCount: 0,
+                selectedTextContextCount: 0
             )
         )
+    }
+
+    @Test func markModeUsesPageBookmarkWhenSessionBeganWithWebPage() {
+        let page = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(),
+            url: "https://example.com/article",
+            pageTitle: "Article",
+            extractedText: "Body",
+            browserName: "Chrome"
+        )
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [page],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .page(primaryPage: ConversationPageReferences.PageReference(
+            title: "Article",
+            url: "https://example.com/article",
+            browserName: "Chrome"
+        )))
+    }
+
+    @Test func markModeUsesConversationSummaryWhenFirstMessageHadNoWebPage() {
+        let page = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(),
+            url: "https://example.com/added-later",
+            pageTitle: "Added later",
+            extractedText: "Body",
+            browserName: "Chrome"
+        )
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What does this selection mean?"),
+            ConversationMessageDTO(role: .assistant, text: "It highlights the key constraint.")
+        ]
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [page],
+            contextualMessages: [],
+            conversationMessages: messages,
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .conversation)
+    }
+
+    @Test func markModeUsesConversationSummaryForChatWithSelectionOnly() {
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 1
+        )
+
+        #expect(mode == .conversation)
+    }
+
+    @Test func markModeRejectsEmptyMarkWithNoContent() {
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == nil)
+    }
+
+    @Test func markModeUsesPageWhenFirstUserMessageAttachedWebPage() {
+        let messages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "Summarize this article",
+                attachedBrowserPages: [
+                    AttachedBrowserPageReference(
+                        url: "https://example.com/post",
+                        pageTitle: "Post",
+                        browserName: "Chrome",
+                        extractedText: "Article body"
+                    )
+                ]
+            )
+        ]
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: messages,
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .page(primaryPage: ConversationPageReferences.PageReference(
+            title: "Post",
+            url: "https://example.com/post",
+            browserName: "Chrome"
+        )))
     }
 
     // MARK: - Writer
@@ -614,5 +721,159 @@ struct CommandExportTests {
         )
 
         #expect(result == nil)
+    }
+
+    // MARK: - Snapshot
+
+    @Test func snapshotEligibilityAcceptsLongArticlePaths() {
+        let page = ConversationPageReferences.PageReference(
+            title: "Example Article",
+            url: "https://example.com/blog/example-article",
+            browserName: "Chrome"
+        )
+        let extractedText = String(repeating: "Paragraph about the article. ", count: 30)
+
+        #expect(
+            MarkExportSnapshotEligibility.shouldIncludeSnapshot(
+                primaryPage: page,
+                extractedText: extractedText,
+                userHint: ""
+            )
+        )
+    }
+
+    @Test func snapshotEligibilityRejectsHomepageAndYouTube() {
+        let homepage = ConversationPageReferences.PageReference(
+            title: "Acme",
+            url: "https://acme.com/",
+            browserName: "Chrome"
+        )
+        let youtube = ConversationPageReferences.PageReference(
+            title: "Video",
+            url: "https://www.youtube.com/watch?v=abc123",
+            browserName: "Chrome"
+        )
+        let longText = String(repeating: "Body text. ", count: 80)
+
+        #expect(
+            !MarkExportSnapshotEligibility.shouldIncludeSnapshot(
+                primaryPage: homepage,
+                extractedText: longText,
+                userHint: ""
+            )
+        )
+        #expect(
+            !MarkExportSnapshotEligibility.shouldIncludeSnapshot(
+                primaryPage: youtube,
+                extractedText: longText,
+                userHint: ""
+            )
+        )
+    }
+
+    @Test func snapshotEligibilityHonorsExplicitArchiveHint() {
+        let homepage = ConversationPageReferences.PageReference(
+            title: "Acme",
+            url: "https://acme.com/",
+            browserName: "Chrome"
+        )
+
+        #expect(
+            MarkExportSnapshotEligibility.shouldIncludeSnapshot(
+                primaryPage: homepage,
+                extractedText: "Short page copy.",
+                userHint: "archive this page verbatim"
+            )
+        )
+    }
+
+    @Test func snapshotSectionAppendsCapturedArticleText() {
+        let capturedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let page = ConversationPageReferences.PageReference(
+            title: "Example Article",
+            url: "https://example.com/blog/example-article",
+            browserName: "Chrome"
+        )
+        let snapshot = MarkExportSnapshotSection.build(
+            extractedText: "First paragraph.\n\nSecond paragraph.",
+            primaryPage: page,
+            capturedAt: capturedAt
+        )
+
+        let body = MarkExportSnapshotSection.append(
+            to: "## Highlights\n\n- Useful article.",
+            snapshotSection: snapshot
+        )
+
+        #expect(body.contains("## Highlights"))
+        #expect(body.contains("## Snapshot"))
+        #expect(body.contains("Captured from Chrome"))
+        #expect(body.contains("[Original page](https://example.com/blog/example-article)"))
+        #expect(body.contains("First paragraph."))
+        #expect(body.hasSuffix("Second paragraph."))
+    }
+
+    @Test func snapshotSectionStripsModelGeneratedSnapshot() {
+        let page = ConversationPageReferences.PageReference(
+            title: "Example Article",
+            url: "https://example.com/blog/example-article",
+            browserName: "Chrome"
+        )
+        let snapshot = MarkExportSnapshotSection.build(
+            extractedText: "Captured article body.",
+            primaryPage: page,
+            capturedAt: nil
+        )
+
+        let body = MarkExportSnapshotSection.append(
+            to: """
+            ## Highlights
+
+            - Summary
+
+            ## Snapshot
+
+            - Model paraphrase that should be removed
+            """,
+            snapshotSection: snapshot
+        )
+
+        #expect(body.contains("Captured article body."))
+        #expect(!body.contains("Model paraphrase"))
+        #expect(body.components(separatedBy: "## Snapshot").count == 2)
+    }
+
+    @Test func primaryPageCapturePrefersOldestContextStackPage() {
+        let oldest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 10),
+            url: "https://example.com/blog/post",
+            pageTitle: "Post",
+            extractedText: "Oldest captured body.",
+            browserName: "Chrome"
+        )
+        let newest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 20),
+            url: "https://example.com/other",
+            pageTitle: "Other",
+            extractedText: "Other body.",
+            browserName: "Chrome"
+        )
+        let primaryPage = ConversationPageReferences.PageReference(
+            title: "Post",
+            url: "https://example.com/blog/post",
+            browserName: "Chrome"
+        )
+
+        let capture = ConversationPageReferences.primaryPageCapture(
+            primaryPage: primaryPage,
+            browserPageContexts: [newest, oldest],
+            contextualMessages: [],
+            conversationMessages: []
+        )
+
+        #expect(capture?.extractedText == "Oldest captured body.")
+        #expect(capture?.capturedAt == oldest.createdAt)
     }
 }

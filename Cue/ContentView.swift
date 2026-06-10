@@ -165,6 +165,11 @@ private struct ConversationHistoryView: View {
                             defaultDirectoryURL: appState.saveExportConfiguration.defaultSaveFolderURL
                         )
                     }
+                },
+                onShowInComposer: selectedConversation.map { conversation in
+                    {
+                        appState.resumeSavedConversation(conversation.id)
+                    }
                 }
             )
         }
@@ -278,6 +283,7 @@ private struct ConversationTranscriptPanel: View {
     let subtitle: String?
     let messages: [ConversationMessageDTO]
     var onExportJSON: (() -> Void)?
+    var onShowInComposer: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -295,8 +301,16 @@ private struct ConversationTranscriptPanel: View {
 
                 Spacer(minLength: 12)
 
-                if let onExportJSON {
-                    SettingsChangeButton("Export JSON", action: onExportJSON)
+                if onExportJSON != nil || onShowInComposer != nil {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        if let onExportJSON {
+                            SettingsChangeButton("Export JSON", action: onExportJSON)
+                        }
+
+                        if let onShowInComposer {
+                            SettingsChangeButton("Show In Composer", action: onShowInComposer)
+                        }
+                    }
                 }
             }
 
