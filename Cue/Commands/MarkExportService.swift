@@ -1,6 +1,6 @@
 import Foundation
 
-enum MarkExportServiceError: LocalizedError {
+enum MarkExportServiceError: LocalizedError, Equatable {
     case invalidModelResponse
     case missingConfiguration(String)
     case missingMarkableContent
@@ -119,7 +119,12 @@ struct MarkExportService {
             primaryPage: primaryPage,
             contextualMessages: contextualMessages
         )
-        var requestMessages = contextualMessages + conversationMessages
+        var requestMessages = MarkExportConversationTranscript.generationRequestMessages(
+            contextualMessages: contextualMessages,
+            conversationMessages: conversationMessages,
+            userHint: userHint,
+            includeTranscriptFraming: hasConversation
+        )
         requestMessages.insert(
             ConversationPageReferences.primaryPageContextMessage(for: primaryPage),
             at: 0
@@ -162,35 +167,18 @@ struct MarkExportService {
             responseText: response.message.text,
             onDebugLog: onDebugLog
         )
-        var generatedContent = try MarkGeneratedContentParser.parse(
+        let generatedContent = try MarkGeneratedContentParser.parse(
             response.message.text,
             fallbackTitle: primaryPage.title
         )
 
-        if !hasUserHint && !hasConversation {
-            let sanitizedBody = MarkExportBodySanitizer.sanitizeForPageOnlyBookmark(generatedContent.body)
-            generatedContent = MarkGeneratedContentParser.Parsed(
-                title: generatedContent.title,
-                body: sanitizedBody
-            )
-        }
-
-        var finalizedBody = MarkExportBodySanitizer.ensureMinimumContent(
-            generatedContent.body,
-            primaryPage: primaryPage,
-            userHint: userHint
-        )
-        finalizedBody = Self.appendSnapshotIfEligible(
-            to: finalizedBody,
+        let bodyWithSnapshot = Self.appendSnapshotIfEligible(
+            to: generatedContent.body,
             primaryPage: primaryPage,
             userHint: userHint,
             browserPageContexts: browserPageContexts,
             contextualMessages: contextualMessages,
             conversationMessages: conversationMessages
-        )
-        generatedContent = MarkGeneratedContentParser.Parsed(
-            title: generatedContent.title,
-            body: finalizedBody
         )
 
         let host = URL(string: primaryPage.url)?.host ?? ""
@@ -198,7 +186,7 @@ struct MarkExportService {
         let result = try noteWriter.write(
             ObsidianNoteWriter.WriteInput(
                 title: generatedContent.title,
-                body: generatedContent.body,
+                body: bodyWithSnapshot,
                 sourceURL: primaryPage.url,
                 references: [
                     ObsidianNoteWriter.Reference(title: primaryPage.title, url: primaryPage.url)
@@ -294,27 +282,9 @@ struct MarkExportService {
             responseText: response.message.text,
             onDebugLog: onDebugLog
         )
-        var generatedContent = try MarkGeneratedContentParser.parse(
+        let generatedContent = try MarkGeneratedContentParser.parse(
             response.message.text,
             fallbackTitle: fallbackTitle
-        )
-        generatedContent = MarkGeneratedContentParser.Parsed(
-            title: MarkExportConversationTranscript.normalizedTitle(
-                parsedTitle: generatedContent.title,
-                conversationMessages: conversationMessages,
-                userHint: userHint
-            ),
-            body: generatedContent.body
-        )
-
-        let finalizedBody = MarkExportBodySanitizer.ensureMinimumConversationContent(
-            generatedContent.body,
-            userHint: userHint,
-            conversationMessages: conversationMessages
-        )
-        generatedContent = MarkGeneratedContentParser.Parsed(
-            title: generatedContent.title,
-            body: finalizedBody
         )
 
         let result = try noteWriter.write(
@@ -434,7 +404,7 @@ struct MarkExportService {
             defaultSynthesisInstruction: defaultSynthesisInstruction
         )
 
-        return prompt
+        return MarkExportPrompts.ensuringGenerationInstructions(prompt)
     }
 
     private static func conversationGenerationSystemPrompt(
@@ -491,7 +461,7 @@ struct MarkExportService {
             """
         }
 
-        return prompt
+        return MarkExportPrompts.ensuringGenerationInstructions(prompt)
     }
 
     private static func pageScenarioInstructions(

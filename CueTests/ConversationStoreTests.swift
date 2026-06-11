@@ -38,4 +38,47 @@ struct ConversationStoreTests {
         #expect(loaded.count == 3)
         #expect(loaded.allSatisfy { !$0.messages.isEmpty })
     }
+
+    @Test("deletes a single message without affecting siblings")
+    func deletesSingleMessage() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cue-conversation-store-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let databaseURL = rootDirectory.appendingPathComponent("cue.sqlite")
+        try CueStoragePaths.ensureDirectoryExists(at: rootDirectory)
+
+        let store = try ConversationStore(databaseURL: databaseURL)
+        let conversationID = UUID()
+        let firstMessage = ConversationMessageDTO(id: UUID(), role: .user, text: "First")
+        let secondMessage = ConversationMessageDTO(id: UUID(), role: .assistant, text: "Second")
+
+        try store.saveConversation(
+            PersistedConversation(
+                id: conversationID,
+                title: "Conversation",
+                createdAt: Date(),
+                updatedAt: Date(),
+                messages: [firstMessage, secondMessage]
+            )
+        )
+
+        try store.deleteMessage(
+            id: firstMessage.id,
+            from: PersistedConversation(
+                id: conversationID,
+                title: "Conversation",
+                createdAt: Date(),
+                updatedAt: Date(),
+                messages: [secondMessage]
+            )
+        )
+
+        let loaded = try store.loadConversations()
+        #expect(loaded.count == 1)
+        #expect(loaded[0].messages.count == 1)
+        #expect(loaded[0].messages[0].id == secondMessage.id)
+        #expect(loaded[0].messages[0].text == "Second")
+    }
 }

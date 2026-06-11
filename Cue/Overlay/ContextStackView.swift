@@ -62,6 +62,7 @@ struct ContextStackView: View {
     let onLoadMostRecent: () -> Void
     let onSetWebSearchEnabled: (Bool) -> Void
     let onRemoveContextItem: (ContextPreviewItem) -> Void
+    let onDeleteMessage: (UUID) -> Void
     let onEscape: () -> Void
 
     @State private var scrollDebounceTask: Task<Void, Never>?
@@ -275,7 +276,9 @@ struct ContextStackView: View {
                                     assistantDisplayName: assistantDisplayName,
                                     rendersStreamingText: model.isSending
                                         && !model.inFlightActivity.showsStatusBox
-                                        && message.id == model.messages.last?.id
+                                        && message.id == model.messages.last?.id,
+                                    canDelete: !model.isSending,
+                                    onDelete: { onDeleteMessage(message.id) }
                                 )
                             }
 
@@ -435,8 +438,35 @@ private struct ConversationMessageBubble: View {
     let message: ConversationMessageDTO
     let assistantDisplayName: String
     let rendersStreamingText: Bool
+    let canDelete: Bool
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
+        ZStack(alignment: .topTrailing) {
+            bubbleContent
+
+            if canDelete && isHovered {
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .background(
+                            Circle()
+                                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .accessibilityLabel("Delete message")
+            }
+        }
+        .onHover { isHovered = $0 }
+    }
+
+    private var bubbleContent: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(senderLabel)
                 .font(.caption2)
@@ -499,6 +529,7 @@ private struct ConversationMessageBubble: View {
         }
         .padding(10)
         .background(backgroundStyle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var senderLabel: String {
@@ -1304,7 +1335,10 @@ private struct ComposerTextField: NSViewRepresentable {
 
             let originalValue = textView.string
             let selectedRange = textView.selectedRange()
-            let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(originalValue)
+            let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(
+                originalValue,
+                previousText: text
+            )
 
             if normalization.didReplace {
                 isApplyingHighlight = true

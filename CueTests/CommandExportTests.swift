@@ -72,6 +72,26 @@ struct CommandExportTests {
         #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("say // later") == "say // later")
     }
 
+    @Test func composerDoesNotReexpandMarkWhenDeletingTrailingSpace() {
+        let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(
+            "/mark",
+            previousText: "/mark "
+        )
+
+        #expect(normalization.didReplace == false)
+        #expect(normalization.text == "/mark")
+    }
+
+    @Test func composerStillExpandsMarkWhenTypingForward() {
+        let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(
+            "/mark",
+            previousText: "/mar"
+        )
+
+        #expect(normalization.didReplace == true)
+        #expect(normalization.text == "/mark ")
+    }
+
     @Test func composerAdjustedSelectedRangeAfterBareMarkExpansion() {
         let bareDoubleSlashRange = ComposerCommandTextNormalizer.adjustedSelectedRange(
             originalRange: NSRange(location: 2, length: 0),
@@ -103,29 +123,27 @@ struct CommandExportTests {
         #expect(MarkCommand.parse(from: "say // later") == nil)
     }
 
-    @Test func markGeneratedContentParserUsesFirstLineAsTitle() throws {
-        let response = """
-        Fallow — codebase intelligence for TypeScript
-        ## Highlights
-        - Useful for large JS repos
-        """
+    @Test func markGeneratedContentParserRequiresJSONResponse() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            {"title":"Fallow — codebase intelligence for TypeScript","body":"## Highlights\\n\\n- Useful for large JS repos"}
+            """
+        )
 
-        let parsed = try MarkGeneratedContentParser.parse(response)
         #expect(parsed.title == "Fallow — codebase intelligence for TypeScript")
         #expect(parsed.body.hasPrefix("## Highlights"))
     }
 
-    @Test func markGeneratedContentParserIgnoresTagsLine() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        Adversarial Security Evaluation
-        Tags: article, research, reference
-        ## Highlights
-        - Field report on security testing
-        """)
-
-        #expect(parsed.title == "Adversarial Security Evaluation")
-        #expect(parsed.body.hasPrefix("## Highlights"))
-        #expect(!parsed.body.localizedCaseInsensitiveContains("Tags:"))
+    @Test func markGeneratedContentParserRejectsMarkdownOnlyResponse() {
+        #expect(throws: MarkExportServiceError.invalidModelResponse) {
+            try MarkGeneratedContentParser.parse(
+                """
+                Fallow — codebase intelligence for TypeScript
+                ## Highlights
+                - Useful for large JS repos
+                """
+            )
+        }
     }
 
     @Test func markWriterUsesCueTagInFrontmatter() throws {
@@ -152,52 +170,35 @@ struct CommandExportTests {
         #expect(markdown.contains("tags: [cue]"))
     }
 
-    @Test func markGeneratedContentParserStripsHeadingPrefixFromTitle() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        # Startup launch notes
-        ## Why I saved this
-        Comparing against Linear.
-        """)
+    @Test func markGeneratedContentParserAcceptsJSONInMarkdownFences() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            ```json
+            {"title":"Startup launch notes","body":"## Why I saved this\\n\\n- Comparing against Linear."}
+            ```
+            """,
+            fallbackTitle: "Fallback"
+        )
 
         #expect(parsed.title == "Startup launch notes")
         #expect(parsed.body.contains("## Why I saved this"))
     }
 
-    @Test func markGeneratedContentParserAcceptsJSONResponse() throws {
-        let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {"title":"Fallow - Codebase Intelligence for TypeScript & JavaScript","body":"## Highlights\\n\\n- Useful for large repos"}
-            """,
-            fallbackTitle: "Fallow"
-        )
-
-        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
-        #expect(parsed.body.hasPrefix("## Highlights"))
+    @Test func markGeneratedContentParserRejectsEmptyBody() {
+        #expect(throws: MarkExportServiceError.invalidModelResponse) {
+            try MarkGeneratedContentParser.parse(
+                "{\"title\":\"MotherDuck\",\"body\":\"## Highlights\"}"
+            )
+        }
     }
 
-    @Test func markGeneratedContentParserAcceptsLegacyDelimiterFormat() throws {
+    @Test func markGeneratedContentParserUsesFallbackTitleWhenJSONTitleEmpty() throws {
         let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {-title-Fallow - Codebase Intelligence for TypeScript & JavaScript-,-body-## Highlights
-
-            - Field report
-            """,
-            fallbackTitle: "Fallow"
-        )
-
-        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
-        #expect(parsed.body.contains("## Highlights"))
-    }
-
-    @Test func markGeneratedContentParserFallsBackWhenFirstLineIsJSONBlob() throws {
-        let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {"title":"Broken","body":"## Highlights\\n- One"}
-            """,
+            "{\"title\":\"\",\"body\":\"## Highlights\\n\\n- One takeaway\"}",
             fallbackTitle: "Page title from browser"
         )
 
-        #expect(parsed.title == "Broken")
+        #expect(parsed.title == "Page title from browser")
     }
 
     @Test func markWriterSanitizesBraceCharactersInFileName() {
@@ -209,54 +210,10 @@ struct CommandExportTests {
         )
     }
 
-    @Test func markBodySanitizerEnsuresMinimumContentWhenBodyIsEmpty() {
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            "",
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Augment – Buddy Bindery & Press",
-                url: "https://example.com/augment",
-                browserName: "Safari"
-            ),
-            userHint: ""
-        )
-
-        #expect(body.contains("## Highlights"))
-        #expect(body.contains("[Augment – Buddy Bindery & Press](https://example.com/augment)"))
-        #expect(body.contains("Saved from Cue for later reference."))
-    }
-
-    @Test func markBodySanitizerEnsuresMinimumContentIncludesHint() {
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            "## Highlights",
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Example Article",
-                url: "https://example.com/article",
-                browserName: "Chrome"
-            ),
-            userHint: "incorporate the major purpose of this article"
-        )
-
-        #expect(body.contains("Bookmark focus: incorporate the major purpose of this article"))
-    }
-
-    @Test func markBodySanitizerPreservesSubstantiveModelBody() {
-        let original = """
-        ## Highlights
-
-        - Useful methodology for security testing
-        """
-
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            original,
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Security Field Report",
-                url: "https://example.com/report",
-                browserName: "Safari"
-            ),
-            userHint: ""
-        )
-
-        #expect(body == original)
+    @Test func markBodySanitizerDetectsSubstantiveContent() {
+        #expect(MarkExportBodySanitizer.hasSubstantiveContent("## Highlights\n\n- Useful methodology"))
+        #expect(!MarkExportBodySanitizer.hasSubstantiveContent("## Highlights"))
+        #expect(!MarkExportBodySanitizer.hasSubstantiveContent(""))
     }
 
     @Test func primaryPageHasExtractedTextDetectsThinContext() {
@@ -298,36 +255,14 @@ struct CommandExportTests {
         )
     }
 
-    @Test func markBodySanitizerStripsPersonalSectionsForPageOnlyBookmark() {
-        let sanitized = MarkExportBodySanitizer.sanitizeForPageOnlyBookmark(
+    @Test func markGeneratedContentParserAcceptsJSONWrappedInFences() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
             """
-            ## Highlights
-
-            - A forthcoming essay collection.
-
-            ## My notes
-
-            This is a call for thoughtful contributions.
-
-            ## Why I saved this
-
-            I want to revisit this later.
+            ```json
+            {"title":"Page bookmark title","body":"## Highlights\\n\\n- Item one"}
+            ```
             """
         )
-
-        #expect(sanitized.contains("## Highlights"))
-        #expect(!sanitized.localizedCaseInsensitiveContains("## My notes"))
-        #expect(!sanitized.localizedCaseInsensitiveContains("## Why I saved this"))
-    }
-
-    @Test func markGeneratedContentParserStripsMarkdownFences() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        ```markdown
-        Page bookmark title
-        ## Highlights
-        - Item one
-        ```
-        """)
 
         #expect(parsed.title == "Page bookmark title")
         #expect(parsed.body.contains("Item one"))
@@ -576,6 +511,50 @@ struct CommandExportTests {
         #expect(transcript[1].text.contains("helper process"))
     }
 
+    @Test func conversationTranscriptMessagesExcludeSavedNoteConfirmations() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "what is mother duck?"),
+            ConversationMessageDTO(role: .assistant, text: "MotherDuck is a cloud warehouse."),
+            ConversationMessageDTO(
+                role: .assistant,
+                text: ObsidianSavedNoteMessage.confirmationText(filePath: "/tmp/bookmarks/note.md")
+            ),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let transcript = MarkExportConversationTranscript.messagesForGeneration(from: messages)
+
+        #expect(transcript.count == 2)
+        #expect(!transcript.contains { $0.text.contains("Saved to Obsidian") })
+    }
+
+    @Test func pageGenerationRequestUsesFilteredTranscript() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "what is duck db?"),
+            ConversationMessageDTO(role: .assistant, text: "DuckDB is an in-process database."),
+            ConversationMessageDTO(role: .user, text: "/mark"),
+            ConversationMessageDTO(
+                role: .assistant,
+                text: ObsidianSavedNoteMessage.confirmationText(filePath: "/tmp/old.md")
+            ),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let requestMessages = MarkExportConversationTranscript.generationRequestMessages(
+            contextualMessages: [],
+            conversationMessages: messages,
+            userHint: "",
+            includeTranscriptFraming: true
+        )
+
+        #expect(requestMessages.count == 3)
+        #expect(requestMessages[0].text.contains("Cue conversation to summarize"))
+        #expect(requestMessages[1].text == "what is duck db?")
+        #expect(requestMessages[2].text.contains("in-process database"))
+        #expect(!requestMessages.contains { $0.text.hasPrefix("/mark") })
+        #expect(!requestMessages.contains { $0.text.contains("Saved to Obsidian") })
+    }
+
     @Test func conversationGenerationRequestIncludesMarkTurnScreenshotMessage() {
         let messageID = UUID()
         let messages = [
@@ -625,48 +604,6 @@ struct CommandExportTests {
         )
     }
 
-    @Test func conversationDigestFallbackIncludesAssistantAnswer() {
-        let messages = [
-            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
-            ConversationMessageDTO(
-                role: .assistant,
-                text: """
-                A sidecar is a helper component that runs next to the main service.
-                In Cue, the search sidecar handles retrieval while the app stays lightweight.
-                """
-            ),
-            ConversationMessageDTO(role: .user, text: "/mark")
-        ]
-
-        let digest = MarkExportConversationTranscript.digestFallback(
-            from: messages,
-            userHint: ""
-        )
-
-        #expect(digest.contains("The user explored this with Cue"))
-        #expect(digest.contains("## Highlights"))
-        #expect(digest.contains("search sidecar"))
-        #expect(!digest.contains("Conversation saved from Cue for later reference."))
-    }
-
-    @Test func conversationTitleNormalizationAvoidsRawUserQuestion() {
-        let messages = [
-            ConversationMessageDTO(
-                role: .user,
-                text: "What is a sidecar? A sidecar is a piece of code or a piece of the service system server that doesn't belong to the main service?"
-            ),
-            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper component.")
-        ]
-
-        let title = MarkExportConversationTranscript.normalizedTitle(
-            parsedTitle: messages[0].text,
-            conversationMessages: messages,
-            userHint: ""
-        )
-
-        #expect(title == "What is a sidecar?")
-        #expect(title.count <= 80)
-    }
 
     @Test func resolvedConversationPromptUsesCustomConfiguration() {
         let customPrompt = "Custom conversation mark prompt."
@@ -1113,5 +1050,24 @@ struct CommandExportTests {
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
         #expect(json?["corpus_root"] as? String == "/tmp/bookmarks")
+    }
+
+    @Test func markPromptEnsuringGenerationInstructionsAppendsMissingRules() {
+        let customPrompt = "Write a short bookmark."
+        let ensured = MarkExportPrompts.ensuringGenerationInstructions(customPrompt)
+
+        #expect(ensured.contains("Write a short bookmark."))
+        #expect(ensured.contains(MarkExportPrompts.whyISavedThisRuleMarker))
+        #expect(ensured.contains(MarkExportPrompts.jsonOutputContractMarker))
+        #expect(ensured.contains("## Why I saved this"))
+    }
+
+    @Test func markPromptEnsuringGenerationInstructionsDoesNotDuplicateDefaultPrompt() {
+        let ensured = MarkExportPrompts.ensuringGenerationInstructions(MarkExportPrompts.defaultBase)
+        let whyMarkerCount = ensured.components(separatedBy: MarkExportPrompts.whyISavedThisRuleMarker).count - 1
+        let jsonMarkerCount = ensured.components(separatedBy: MarkExportPrompts.jsonOutputContractMarker).count - 1
+
+        #expect(whyMarkerCount == 1)
+        #expect(jsonMarkerCount == 1)
     }
 }

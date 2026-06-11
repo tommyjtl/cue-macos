@@ -256,6 +256,11 @@ final class AppModel {
                     self?.removeContextItemFromOverlay(item)
                 }
             },
+            onDeleteMessage: { [weak self] messageID in
+                Task { @MainActor in
+                    self?.deleteConversationMessage(messageID)
+                }
+            },
             onPresentationChange: { [weak self] in
                 self?.refreshOverlayPresentationState()
             }
@@ -749,6 +754,18 @@ final class AppModel {
 
     func cancelConversationSend(resetDraftState: Bool = true) {
         conversationCoordinator?.cancelSend(
+            setError: { [weak self] message in
+                self?.setCaptureErrorMessage(message, source: .conversation)
+            },
+            syncPanel: { [weak self] in
+                self?.syncOverlayState()
+            }
+        )
+    }
+
+    func deleteConversationMessage(_ messageID: UUID) {
+        conversationCoordinator?.deleteMessage(
+            id: messageID,
             setError: { [weak self] message in
                 self?.setCaptureErrorMessage(message, source: .conversation)
             },

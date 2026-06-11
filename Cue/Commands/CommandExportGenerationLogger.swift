@@ -27,6 +27,9 @@ enum CommandExportGenerationLogger {
             "Mode: conversation"
         }
 
+        let systemPrompt = request.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let containsWhyISavedThisRule = systemPrompt.contains(MarkExportPrompts.whyISavedThisRuleMarker)
+
         let lines = [
             "=== Mark Export (/mark) Request ===",
             "Provider: \(configuration.providerDisplayName)",
@@ -36,9 +39,12 @@ enum CommandExportGenerationLogger {
             "Usable context: \(hasUsableContext ? "yes" : "no")",
             "Browser pages in context stack: \(browserPageContexts.count)",
             "Contextual system messages: \(contextualMessages.count)",
-            "Conversation messages: \(conversationMessages.count)",
-            "System prompt head: \(preview(request.systemPrompt))",
-            "System prompt tail: \(previewSuffix(request.systemPrompt))"
+            "Session messages: \(conversationMessages.count)",
+            "Transcript messages: \(MarkExportConversationTranscript.messagesForGeneration(from: conversationMessages).count)",
+            "Request messages: \(request.messages.count)",
+            "System prompt chars: \(systemPrompt.count)",
+            "Contains whyISavedThisRule: \(containsWhyISavedThisRule ? "yes" : "no")",
+            "System prompt:\n\(systemPrompt)"
         ]
 
         log(lines.joined(separator: "\n"), onDebugLog: onDebugLog)
@@ -48,10 +54,14 @@ enum CommandExportGenerationLogger {
         responseText: String,
         onDebugLog: ((String) -> Void)? = nil
     ) {
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = trimmed.isEmpty ? "(empty)" : trimmed
+
         log(
             [
                 "=== Mark Export Model Response ===",
-                preview(responseText, limit: 800)
+                "Response chars: \(trimmed.count)",
+                body
             ].joined(separator: "\n"),
             onDebugLog: onDebugLog
         )

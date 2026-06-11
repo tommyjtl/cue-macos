@@ -6,9 +6,12 @@ enum ComposerCommandTextNormalizer {
 
     /// Replaces a leading `//` shortcut with `/mark`, preserving hint text after the shortcut.
     /// Bare `//` or `/mark` expands to `/mark ` so the cursor can continue with an optional hint.
-    static func normalizeComposerDraft(_ text: String) -> String {
+    static func normalizeComposerDraft(_ text: String, previousText: String? = nil) -> String {
         if text == markKeyword {
-            return markKeyword + " "
+            if shouldExpandBareMarkKeyword(previousText: previousText) {
+                return markKeyword + " "
+            }
+            return text
         }
 
         guard text.hasPrefix(doubleSlashPrefix) else {
@@ -27,13 +30,32 @@ enum ComposerCommandTextNormalizer {
         return markKeyword + " " + remainder
     }
 
-    static func normalizingComposerDraftIfNeeded(_ text: String) -> (text: String, didReplace: Bool) {
-        let normalized = normalizeComposerDraft(text)
+    static func normalizingComposerDraftIfNeeded(
+        _ text: String,
+        previousText: String? = nil
+    ) -> (text: String, didReplace: Bool) {
+        let normalized = normalizeComposerDraft(text, previousText: previousText)
         guard normalized != text else {
             return (text, false)
         }
 
         return (normalized, true)
+    }
+
+    private static func shouldExpandBareMarkKeyword(previousText: String?) -> Bool {
+        guard let previousText else {
+            return true
+        }
+
+        if previousText == markKeyword + " " || previousText.hasPrefix(markKeyword + " ") {
+            return false
+        }
+
+        if previousText == markKeyword {
+            return false
+        }
+
+        return markKeyword.hasPrefix(previousText) && previousText.count < markKeyword.count
     }
 
     /// Keeps the insertion point after the expanded `/mark` token when `//` is rewritten.

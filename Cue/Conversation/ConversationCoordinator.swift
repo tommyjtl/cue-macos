@@ -78,6 +78,49 @@ final class ConversationCoordinator {
         publishSession()
     }
 
+    func deleteMessage(
+        id: UUID,
+        setError: @MainActor (String?) -> Void,
+        syncPanel: @MainActor () -> Void
+    ) {
+        guard !session.isConversationInProgress else {
+            return
+        }
+
+        guard session.messages.contains(where: { $0.id == id }) else {
+            return
+        }
+
+        let conversationID = session.activeConversationID ?? session.selectedSavedConversationID
+        let updatedMessages = session.messages.filter { $0.id != id }
+
+        guard let conversationStore, let conversationID else {
+            session.messages = updatedMessages
+            publishSession()
+            syncPanel()
+            return
+        }
+
+        let existingConversation = session.savedConversations.first(where: { $0.id == conversationID })
+        let updatedConversation = PersistedConversation(
+            id: conversationID,
+            title: conversationTitle(for: updatedMessages),
+            createdAt: existingConversation?.createdAt ?? Date(),
+            updatedAt: Date(),
+            messages: updatedMessages
+        )
+
+        do {
+            try conversationStore.deleteMessage(id: id, from: updatedConversation)
+            session.messages = updatedMessages
+            upsertSavedConversation(updatedConversation)
+            publishSession()
+            syncPanel()
+        } catch {
+            setError(error.localizedDescription)
+        }
+    }
+
     func cancelSend(
         setError: @MainActor (String?) -> Void,
         syncPanel: @MainActor () -> Void
@@ -1041,7 +1084,7 @@ final class ConversationCoordinator {
     }
 
     private func persistConversationSnapshot(conversationID: UUID, setError: @MainActor (String?) -> Void) {
-        guard let conversationStore, !session.messages.isEmpty else {
+        guard let conversationStore else {
             return
         }
 
