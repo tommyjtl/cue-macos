@@ -15,7 +15,7 @@ Respond with a single JSON object only—no commentary before or after, no YAML 
 
 - title: concise, specific, under 80 characters; suitable for a filename; not a markdown heading
 - body: markdown only; must include substantive content (not just headings). Never return an empty body.
-- Do not include a Tags line, ## Snapshot, or ## References in the body
+- Do not include a Tags line or ## References in the body
 """
 
     static let defaultBase = """
@@ -32,7 +32,6 @@ Body rules:
 \(whyISavedThisRule)
 - Include ## My notes ONLY when the user hint or conversation clearly states a subjective opinion, stance, or framing. Never infer this from the page alone
 - Do not create empty sections or placeholder headings
-- Cue appends captured page text separately for article-like pages—do not write ## Snapshot
 - Honor the user's hint about what they are bookmarking (blog, product, startup, docs, etc.) when present
 - Do not invent facts not supported by the page context or conversation
 """

@@ -172,21 +172,12 @@ struct MarkExportService {
             fallbackTitle: primaryPage.title
         )
 
-        let bodyWithSnapshot = Self.appendSnapshotIfEligible(
-            to: generatedContent.body,
-            primaryPage: primaryPage,
-            userHint: userHint,
-            browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages,
-            conversationMessages: conversationMessages
-        )
-
         let host = URL(string: primaryPage.url)?.host ?? ""
 
         let result = try noteWriter.write(
             ObsidianNoteWriter.WriteInput(
                 title: generatedContent.title,
-                body: bodyWithSnapshot,
+                body: generatedContent.body,
                 sourceURL: primaryPage.url,
                 references: [
                     ObsidianNoteWriter.Reference(title: primaryPage.title, url: primaryPage.url)
@@ -327,40 +318,6 @@ struct MarkExportService {
         contextualMessages.contains { message in
             message.role == .system && message.text.hasPrefix("Selected text from")
         }
-    }
-
-    private static func appendSnapshotIfEligible(
-        to body: String,
-        primaryPage: ConversationPageReferences.PageReference,
-        userHint: String,
-        browserPageContexts: [BrowserPageContext],
-        contextualMessages: [ConversationMessageDTO],
-        conversationMessages: [ConversationMessageDTO]
-    ) -> String {
-        guard let capture = ConversationPageReferences.primaryPageCapture(
-            primaryPage: primaryPage,
-            browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages,
-            conversationMessages: conversationMessages
-        ) else {
-            return body
-        }
-
-        guard MarkExportSnapshotEligibility.shouldIncludeSnapshot(
-            primaryPage: primaryPage,
-            extractedText: capture.extractedText,
-            userHint: userHint
-        ) else {
-            return body
-        }
-
-        let snapshotSection = MarkExportSnapshotSection.build(
-            extractedText: capture.extractedText,
-            primaryPage: primaryPage,
-            capturedAt: capture.capturedAt
-        )
-
-        return MarkExportSnapshotSection.append(to: body, snapshotSection: snapshotSection)
     }
 
     private static func pageGenerationSystemPrompt(
