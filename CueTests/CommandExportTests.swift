@@ -72,6 +72,26 @@ struct CommandExportTests {
         #expect(ComposerCommandTextNormalizer.normalizeComposerDraft("say // later") == "say // later")
     }
 
+    @Test func composerDoesNotReexpandMarkWhenDeletingTrailingSpace() {
+        let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(
+            "/mark",
+            previousText: "/mark "
+        )
+
+        #expect(normalization.didReplace == false)
+        #expect(normalization.text == "/mark")
+    }
+
+    @Test func composerStillExpandsMarkWhenTypingForward() {
+        let normalization = ComposerCommandTextNormalizer.normalizingComposerDraftIfNeeded(
+            "/mark",
+            previousText: "/mar"
+        )
+
+        #expect(normalization.didReplace == true)
+        #expect(normalization.text == "/mark ")
+    }
+
     @Test func composerAdjustedSelectedRangeAfterBareMarkExpansion() {
         let bareDoubleSlashRange = ComposerCommandTextNormalizer.adjustedSelectedRange(
             originalRange: NSRange(location: 2, length: 0),
@@ -103,29 +123,27 @@ struct CommandExportTests {
         #expect(MarkCommand.parse(from: "say // later") == nil)
     }
 
-    @Test func markGeneratedContentParserUsesFirstLineAsTitle() throws {
-        let response = """
-        Fallow — codebase intelligence for TypeScript
-        ## Highlights
-        - Useful for large JS repos
-        """
+    @Test func markGeneratedContentParserRequiresJSONResponse() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            {"title":"Fallow — codebase intelligence for TypeScript","body":"## Highlights\\n\\n- Useful for large JS repos"}
+            """
+        )
 
-        let parsed = try MarkGeneratedContentParser.parse(response)
         #expect(parsed.title == "Fallow — codebase intelligence for TypeScript")
         #expect(parsed.body.hasPrefix("## Highlights"))
     }
 
-    @Test func markGeneratedContentParserIgnoresTagsLine() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        Adversarial Security Evaluation
-        Tags: article, research, reference
-        ## Highlights
-        - Field report on security testing
-        """)
-
-        #expect(parsed.title == "Adversarial Security Evaluation")
-        #expect(parsed.body.hasPrefix("## Highlights"))
-        #expect(!parsed.body.localizedCaseInsensitiveContains("Tags:"))
+    @Test func markGeneratedContentParserRejectsMarkdownOnlyResponse() {
+        #expect(throws: MarkGeneratedContentParseFailure.invalidJSON("Response is not a JSON object.")) {
+            try MarkGeneratedContentParser.parse(
+                """
+                Fallow — codebase intelligence for TypeScript
+                ## Highlights
+                - Useful for large JS repos
+                """
+            )
+        }
     }
 
     @Test func markWriterUsesCueTagInFrontmatter() throws {
@@ -152,52 +170,35 @@ struct CommandExportTests {
         #expect(markdown.contains("tags: [cue]"))
     }
 
-    @Test func markGeneratedContentParserStripsHeadingPrefixFromTitle() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        # Startup launch notes
-        ## Why I saved this
-        Comparing against Linear.
-        """)
+    @Test func markGeneratedContentParserAcceptsJSONInMarkdownFences() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
+            """
+            ```json
+            {"title":"Startup launch notes","body":"## Why I saved this\\n\\n- Comparing against Linear."}
+            ```
+            """,
+            fallbackTitle: "Fallback"
+        )
 
         #expect(parsed.title == "Startup launch notes")
         #expect(parsed.body.contains("## Why I saved this"))
     }
 
-    @Test func markGeneratedContentParserAcceptsJSONResponse() throws {
-        let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {"title":"Fallow - Codebase Intelligence for TypeScript & JavaScript","body":"## Highlights\\n\\n- Useful for large repos"}
-            """,
-            fallbackTitle: "Fallow"
-        )
-
-        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
-        #expect(parsed.body.hasPrefix("## Highlights"))
+    @Test func markGeneratedContentParserRejectsEmptyBody() {
+        #expect(throws: MarkGeneratedContentParseFailure.emptyBody) {
+            try MarkGeneratedContentParser.parse(
+                "{\"title\":\"MotherDuck\",\"body\":\"## Highlights\"}"
+            )
+        }
     }
 
-    @Test func markGeneratedContentParserAcceptsLegacyDelimiterFormat() throws {
+    @Test func markGeneratedContentParserUsesFallbackTitleWhenJSONTitleEmpty() throws {
         let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {-title-Fallow - Codebase Intelligence for TypeScript & JavaScript-,-body-## Highlights
-
-            - Field report
-            """,
-            fallbackTitle: "Fallow"
-        )
-
-        #expect(parsed.title == "Fallow - Codebase Intelligence for TypeScript & JavaScript")
-        #expect(parsed.body.contains("## Highlights"))
-    }
-
-    @Test func markGeneratedContentParserFallsBackWhenFirstLineIsJSONBlob() throws {
-        let parsed = try MarkGeneratedContentParser.parse(
-            """
-            {"title":"Broken","body":"## Highlights\\n- One"}
-            """,
+            "{\"title\":\"\",\"body\":\"## Highlights\\n\\n- One takeaway\"}",
             fallbackTitle: "Page title from browser"
         )
 
-        #expect(parsed.title == "Broken")
+        #expect(parsed.title == "Page title from browser")
     }
 
     @Test func markWriterSanitizesBraceCharactersInFileName() {
@@ -209,54 +210,10 @@ struct CommandExportTests {
         )
     }
 
-    @Test func markBodySanitizerEnsuresMinimumContentWhenBodyIsEmpty() {
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            "",
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Augment – Buddy Bindery & Press",
-                url: "https://example.com/augment",
-                browserName: "Safari"
-            ),
-            userHint: ""
-        )
-
-        #expect(body.contains("## Highlights"))
-        #expect(body.contains("[Augment – Buddy Bindery & Press](https://example.com/augment)"))
-        #expect(body.contains("Saved from Cue for later reference."))
-    }
-
-    @Test func markBodySanitizerEnsuresMinimumContentIncludesHint() {
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            "## Highlights",
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Example Article",
-                url: "https://example.com/article",
-                browserName: "Chrome"
-            ),
-            userHint: "incorporate the major purpose of this article"
-        )
-
-        #expect(body.contains("Bookmark focus: incorporate the major purpose of this article"))
-    }
-
-    @Test func markBodySanitizerPreservesSubstantiveModelBody() {
-        let original = """
-        ## Highlights
-
-        - Useful methodology for security testing
-        """
-
-        let body = MarkExportBodySanitizer.ensureMinimumContent(
-            original,
-            primaryPage: ConversationPageReferences.PageReference(
-                title: "Security Field Report",
-                url: "https://example.com/report",
-                browserName: "Safari"
-            ),
-            userHint: ""
-        )
-
-        #expect(body == original)
+    @Test func markBodySanitizerDetectsSubstantiveContent() {
+        #expect(MarkExportBodySanitizer.hasSubstantiveContent("## Highlights\n\n- Useful methodology"))
+        #expect(!MarkExportBodySanitizer.hasSubstantiveContent("## Highlights"))
+        #expect(!MarkExportBodySanitizer.hasSubstantiveContent(""))
     }
 
     @Test func primaryPageHasExtractedTextDetectsThinContext() {
@@ -298,36 +255,14 @@ struct CommandExportTests {
         )
     }
 
-    @Test func markBodySanitizerStripsPersonalSectionsForPageOnlyBookmark() {
-        let sanitized = MarkExportBodySanitizer.sanitizeForPageOnlyBookmark(
+    @Test func markGeneratedContentParserAcceptsJSONWrappedInFences() throws {
+        let parsed = try MarkGeneratedContentParser.parse(
             """
-            ## Highlights
-
-            - A forthcoming essay collection.
-
-            ## My notes
-
-            This is a call for thoughtful contributions.
-
-            ## Why I saved this
-
-            I want to revisit this later.
+            ```json
+            {"title":"Page bookmark title","body":"## Highlights\\n\\n- Item one"}
+            ```
             """
         )
-
-        #expect(sanitized.contains("## Highlights"))
-        #expect(!sanitized.localizedCaseInsensitiveContains("## My notes"))
-        #expect(!sanitized.localizedCaseInsensitiveContains("## Why I saved this"))
-    }
-
-    @Test func markGeneratedContentParserStripsMarkdownFences() throws {
-        let parsed = try MarkGeneratedContentParser.parse("""
-        ```markdown
-        Page bookmark title
-        ## Highlights
-        - Item one
-        ```
-        """)
 
         #expect(parsed.title == "Page bookmark title")
         #expect(parsed.body.contains("Item one"))
@@ -430,12 +365,287 @@ struct CommandExportTests {
             browserName: "Safari"
         )
         #expect(
-            MarkCommand.hasMarkablePage(
+            MarkCommand.hasMarkableContent(
                 browserPageContexts: [page],
                 contextualMessages: [],
-                conversationMessages: []
+                conversationMessages: [],
+                screenshotCount: 0,
+                selectedTextContextCount: 0
             )
         )
+    }
+
+    @Test func markModeUsesPageBookmarkWhenSessionBeganWithWebPage() {
+        let page = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(),
+            url: "https://example.com/article",
+            pageTitle: "Article",
+            extractedText: "Body",
+            browserName: "Chrome"
+        )
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [page],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .page(primaryPage: ConversationPageReferences.PageReference(
+            title: "Article",
+            url: "https://example.com/article",
+            browserName: "Chrome"
+        )))
+    }
+
+    @Test func markModeUsesConversationSummaryWhenFirstMessageHadNoWebPage() {
+        let page = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(),
+            url: "https://example.com/added-later",
+            pageTitle: "Added later",
+            extractedText: "Body",
+            browserName: "Chrome"
+        )
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What does this selection mean?"),
+            ConversationMessageDTO(role: .assistant, text: "It highlights the key constraint.")
+        ]
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [page],
+            contextualMessages: [],
+            conversationMessages: messages,
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .conversation)
+    }
+
+    @Test func markModeUsesConversationSummaryForChatWithSelectionOnly() {
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 1
+        )
+
+        #expect(mode == .conversation)
+    }
+
+    @Test func markModeRejectsEmptyMarkWithNoContent() {
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: [],
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == nil)
+    }
+
+    @Test func conversationContextBuildOmitsHistoricalWebPagesWhenDisabled() {
+        let messages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "What does this selection mean?",
+                attachedBrowserPages: [
+                    AttachedBrowserPageReference(
+                        url: "https://example.com/added-later",
+                        pageTitle: "Added later",
+                        browserName: "Chrome",
+                        extractedText: "Leaked page body"
+                    )
+                ]
+            )
+        ]
+
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: messages,
+            selectedTextContexts: [],
+            browserPageContexts: [
+                BrowserPageContext(
+                    id: UUID(),
+                    createdAt: Date(),
+                    url: "https://example.com/stack-page",
+                    pageTitle: "Stack page",
+                    extractedText: "Stack body",
+                    browserName: "Chrome"
+                )
+            ],
+            includeWebPageContext: false
+        )
+
+        #expect(contextualMessages.isEmpty)
+    }
+
+    @Test func markConfigurationDecodesLegacyPayloadWithoutConversationPrompt() throws {
+        let data = try JSONEncoder().encode(
+            MarkExportConfiguration(
+                isEnabled: true,
+                exportFolderPath: "/tmp/mark",
+                systemPrompt: MarkExportPrompts.defaultBase
+            )
+        )
+
+        let decoded = try JSONDecoder().decode(MarkExportConfiguration.self, from: data)
+        #expect(decoded.conversationSystemPrompt == MarkExportPrompts.conversationBase)
+    }
+
+    @Test func conversationTranscriptMessagesExcludeMarkCommand() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process alongside the main service."),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let transcript = MarkExportConversationTranscript.messagesForGeneration(from: messages)
+
+        #expect(transcript.count == 2)
+        #expect(transcript[0].text == "What is a sidecar?")
+        #expect(transcript[1].text.contains("helper process"))
+    }
+
+    @Test func conversationTranscriptMessagesExcludeSavedNoteConfirmations() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "what is mother duck?"),
+            ConversationMessageDTO(role: .assistant, text: "MotherDuck is a cloud warehouse."),
+            ConversationMessageDTO(
+                role: .assistant,
+                text: ObsidianSavedNoteMessage.confirmationText(filePath: "/tmp/bookmarks/note.md")
+            ),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let transcript = MarkExportConversationTranscript.messagesForGeneration(from: messages)
+
+        #expect(transcript.count == 2)
+        #expect(!transcript.contains { $0.text.contains("Saved to Obsidian") })
+    }
+
+    @Test func pageGenerationRequestUsesFilteredTranscript() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "what is duck db?"),
+            ConversationMessageDTO(role: .assistant, text: "DuckDB is an in-process database."),
+            ConversationMessageDTO(role: .user, text: "/mark"),
+            ConversationMessageDTO(
+                role: .assistant,
+                text: ObsidianSavedNoteMessage.confirmationText(filePath: "/tmp/old.md")
+            ),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        let requestMessages = MarkExportConversationTranscript.generationRequestMessages(
+            contextualMessages: [],
+            conversationMessages: messages,
+            userHint: "",
+            includeTranscriptFraming: true
+        )
+
+        #expect(requestMessages.count == 3)
+        #expect(requestMessages[0].text.contains("Cue conversation to summarize"))
+        #expect(requestMessages[1].text == "what is duck db?")
+        #expect(requestMessages[2].text.contains("in-process database"))
+        #expect(!requestMessages.contains { $0.text.hasPrefix("/mark") })
+        #expect(!requestMessages.contains { $0.text.contains("Saved to Obsidian") })
+    }
+
+    @Test func conversationGenerationRequestIncludesMarkTurnScreenshotMessage() {
+        let messageID = UUID()
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process."),
+            ConversationMessageDTO(
+                id: messageID,
+                role: .user,
+                text: "/mark architecture diagram",
+                imageAttachments: [
+                    ConversationImageAttachmentReference(
+                        id: UUID(),
+                        mimeType: "image/png",
+                        relativePath: "screenshots/test.png"
+                    )
+                ]
+            )
+        ]
+
+        let requestMessages = MarkExportConversationTranscript.generationRequestMessages(
+            contextualMessages: [],
+            conversationMessages: messages,
+            userHint: "architecture diagram"
+        )
+
+        #expect(!requestMessages.contains { $0.text == "/mark architecture diagram" })
+        #expect(requestMessages.contains { $0.role == .system && $0.text.contains("Cue conversation to summarize") })
+
+        let markTurnMessage = requestMessages.last
+        #expect(markTurnMessage?.id == messageID)
+        #expect(markTurnMessage?.text == "architecture diagram")
+        #expect(markTurnMessage?.imageAttachments.count == 1)
+    }
+
+    @Test func conversationMarkTurnAttachmentMessageRequiresScreenshots() {
+        let messages = [
+            ConversationMessageDTO(role: .user, text: "What is a sidecar?"),
+            ConversationMessageDTO(role: .assistant, text: "A sidecar is a helper process."),
+            ConversationMessageDTO(role: .user, text: "/mark")
+        ]
+
+        #expect(
+            MarkExportConversationTranscript.markTurnAttachmentMessage(
+                from: messages,
+                userHint: ""
+            ) == nil
+        )
+    }
+
+
+    @Test func resolvedConversationPromptUsesCustomConfiguration() {
+        let customPrompt = "Custom conversation mark prompt."
+        let configuration = MarkExportConfiguration(
+            isEnabled: true,
+            exportFolderPath: "/tmp/mark",
+            systemPrompt: MarkExportPrompts.defaultBase,
+            conversationSystemPrompt: customPrompt
+        )
+
+        #expect(MarkExportPrompts.resolvedConversationPrompt(from: configuration) == customPrompt)
+    }
+
+    @Test func markModeUsesPageWhenFirstUserMessageAttachedWebPage() {
+        let messages = [
+            ConversationMessageDTO(
+                role: .user,
+                text: "Summarize this article",
+                attachedBrowserPages: [
+                    AttachedBrowserPageReference(
+                        url: "https://example.com/post",
+                        pageTitle: "Post",
+                        browserName: "Chrome",
+                        extractedText: "Article body"
+                    )
+                ]
+            )
+        ]
+
+        let mode = MarkExportModeResolver.resolve(
+            browserPageContexts: [],
+            contextualMessages: [],
+            conversationMessages: messages,
+            screenshotCount: 0,
+            selectedTextContextCount: 0
+        )
+
+        #expect(mode == .page(primaryPage: ConversationPageReferences.PageReference(
+            title: "Post",
+            url: "https://example.com/post",
+            browserName: "Chrome"
+        )))
     }
 
     // MARK: - Writer
@@ -614,5 +824,148 @@ struct CommandExportTests {
         )
 
         #expect(result == nil)
+    }
+
+    @Test func primaryPageCapturePrefersOldestContextStackPage() {
+        let oldest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 10),
+            url: "https://example.com/blog/post",
+            pageTitle: "Post",
+            extractedText: "Oldest captured body.",
+            browserName: "Chrome"
+        )
+        let newest = BrowserPageContext(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 20),
+            url: "https://example.com/other",
+            pageTitle: "Other",
+            extractedText: "Other body.",
+            browserName: "Chrome"
+        )
+        let primaryPage = ConversationPageReferences.PageReference(
+            title: "Post",
+            url: "https://example.com/blog/post",
+            browserName: "Chrome"
+        )
+
+        let capture = ConversationPageReferences.primaryPageCapture(
+            primaryPage: primaryPage,
+            browserPageContexts: [newest, oldest],
+            contextualMessages: [],
+            conversationMessages: []
+        )
+
+        #expect(capture?.extractedText == "Oldest captured body.")
+        #expect(capture?.capturedAt == oldest.createdAt)
+    }
+
+    // MARK: - Search command
+
+    @Test func searchCommandMatchesBareKeyword() {
+        #expect(SearchCommand.parse(from: "/search")?.query == "")
+        #expect(SearchCommand.parse(from: "  /search  ")?.query == "")
+    }
+
+    @Test func searchCommandMatchesWithQuery() {
+        #expect(SearchCommand.parse(from: "/search what did I save about MLX?")?.query == "what did I save about MLX?")
+    }
+
+    @Test func searchCommandRejectsPartialKeywordMatches() {
+        #expect(SearchCommand.parse(from: "/searching notes") == nil)
+        #expect(SearchCommand.parse(from: "please /search later") == nil)
+    }
+
+    @Test func registryParsesSearchCommand() {
+        if case let .search(parsed) = ComposerCommandRegistry.parse(from: "/search mlx agents") {
+            #expect(parsed.query == "mlx agents")
+        } else {
+            Issue.record("Expected search command")
+        }
+    }
+
+    @Test func searchResultMessageRoundTripPreservesSources() {
+        let sources = [
+            SearchResultSource(
+                filePath: "/tmp/note.md",
+                title: "MLX Agents",
+                excerpt: "Local stack overview.",
+                section: "Highlights"
+            )
+        ]
+        let message = SearchResultMessage.messageText(answer: "You saved one note.", sources: sources)
+        let parsed = SearchResultMessage.parse(from: message)
+
+        #expect(parsed?.answer == "You saved one note.")
+        #expect(parsed?.sources == sources)
+    }
+
+    @Test func searchConfigurationRequiresAgentModeAndMarkFolder() {
+        let disabled = SearchConfiguration(isAgentModeEnabled: false)
+        let mark = MarkExportConfiguration(isEnabled: true, exportFolderPath: "/tmp/bookmarks")
+
+        #expect(disabled.validationError(markConfiguration: mark)?.contains("Agent mode") == true)
+
+        let enabled = SearchConfiguration(isAgentModeEnabled: true)
+        let missingFolder = MarkExportConfiguration(isEnabled: false, exportFolderPath: "")
+
+        #expect(enabled.validationError(markConfiguration: missingFolder)?.contains("Mark with /mark") == true)
+    }
+
+    @Test func searchSidecarLLMConfigurationMapsConversationSettings() {
+        var configuration = ConversationConfiguration.defaultValue
+        configuration.provider = .ollama
+        configuration.ollamaBaseURL = "http://localhost:11434"
+        configuration.ollamaModel = "gemma4:e4b-mlx"
+
+        let mapped = SearchSidecarLLMConfiguration(configuration: configuration)
+        #expect(mapped.provider == "ollama")
+        #expect(mapped.baseURL == "http://localhost:11434")
+        #expect(mapped.model == "gemma4:e4b-mlx")
+    }
+
+    @Test func searchSidecarIndexRequestEncodesCorpusRoot() throws {
+        let request = SearchSidecarIndexRequest(corpusRoot: "/tmp/bookmarks")
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["corpus_root"] as? String == "/tmp/bookmarks")
+    }
+
+    @Test func markPromptEnsuringGenerationInstructionsAppendsMissingRules() {
+        let customPrompt = "Write a short bookmark."
+        let ensured = MarkExportPrompts.ensuringGenerationInstructions(customPrompt)
+
+        #expect(ensured.contains("Write a short bookmark."))
+        #expect(ensured.contains(MarkExportPrompts.whyISavedThisRuleMarker))
+        #expect(ensured.contains(MarkExportPrompts.jsonOutputContractMarker))
+        #expect(ensured.contains("## Why I saved this"))
+    }
+
+    @Test func markPromptEnsuringGenerationInstructionsDoesNotDuplicateDefaultPrompt() {
+        let ensured = MarkExportPrompts.ensuringGenerationInstructions(MarkExportPrompts.defaultBase)
+        let whyMarkerCount = ensured.components(separatedBy: MarkExportPrompts.whyISavedThisRuleMarker).count - 1
+        let jsonMarkerCount = ensured.components(separatedBy: MarkExportPrompts.jsonOutputContractMarker).count - 1
+
+        #expect(whyMarkerCount == 1)
+        #expect(jsonMarkerCount == 1)
+    }
+
+    @Test func markExportFailureMessageRoundTrip() {
+        let userMessageID = UUID()
+        let text = MarkExportFailureMessage.messageText(
+            userMessageID: userMessageID,
+            errorDescription: "Cue could not parse the generated bookmark content."
+        )
+
+        let parsed = MarkExportFailureMessage.parse(from: text)
+        #expect(parsed?.userMessageID == userMessageID)
+        #expect(parsed?.errorDescription == "Cue could not parse the generated bookmark content.")
+    }
+
+    @Test func markGeneratedContentParserReportsJSONDecodeFailure() {
+        #expect(throws: MarkGeneratedContentParseFailure.self) {
+            try MarkGeneratedContentParser.parse("{\"title\":\"Test\",\"body\":\"## Highlights\\n\\n- Item\"\"}")
+        }
     }
 }

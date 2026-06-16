@@ -103,6 +103,23 @@ final class ConversationStore {
         }
     }
 
+    func deleteMessage(id: UUID, from conversation: PersistedConversation) throws {
+        try execute(sql: "BEGIN IMMEDIATE TRANSACTION;")
+
+        do {
+            let didDelete = try messageRepository.deleteMessage(id: id, conversationID: conversation.id)
+            guard didDelete else {
+                throw ConversationStoreError.invalidData("Could not find message to delete.")
+            }
+
+            try conversationRepository.upsertConversation(conversation)
+            try execute(sql: "COMMIT;")
+        } catch {
+            try? execute(sql: "ROLLBACK;")
+            throw error
+        }
+    }
+
     private func execute(sql: String) throws {
         let result = sqlite3_exec(database, sql, nil, nil, nil)
         guard result == SQLITE_OK else {

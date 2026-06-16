@@ -182,6 +182,18 @@ final class MessageRepository {
         try SQLiteRepositorySupport.executePreparedStatement(statement, database: database)
     }
 
+    @discardableResult
+    func deleteMessage(id: UUID, conversationID: UUID) throws -> Bool {
+        let sql = "DELETE FROM messages WHERE id = ? AND conversation_id = ?;"
+        let statement = try SQLiteRepositorySupport.prepareStatement(sql: sql, database: database)
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, 2, conversationID.uuidString, -1, SQLITE_TRANSIENT)
+        try SQLiteRepositorySupport.executePreparedStatement(statement, database: database)
+        return sqlite3_changes(database) > 0
+    }
+
     func insertMessage(_ message: ConversationMessageDTO, conversationID: UUID, sortIndex: Int) throws {
         let messageSQL = """
         INSERT INTO messages (id, conversation_id, role, status, created_at)

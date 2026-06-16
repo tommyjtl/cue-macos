@@ -22,6 +22,8 @@ struct ChatSettingsView: View {
                         }
                     }
 
+                    ChatAgentModeSection()
+
                     PrivateModeConfigurationSection()
                         .id(ChatConfigurationAnchor.privateMode)
 
@@ -78,6 +80,118 @@ private struct ChatActiveModeSection: View {
             }
             .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
             .padding(.vertical, SettingsLayout.rowVerticalPadding)
+        }
+    }
+}
+
+// MARK: - Agent Mode
+
+private struct ChatAgentModeSection: View {
+    @Environment(AppModel.self) private var appState
+    @State private var sidecarStatus = "Checking cue-search…"
+    @State private var isReindexing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsCard {
+                SettingsToggleRow(
+                    title: "Agent mode",
+                    subtitle: "Search saved notes with /search through the local cue-search sidecar. Uses your Private or Cloud model above.",
+                    isOn: appState.searchConfigurationBinding(for: \.isAgentModeEnabled)
+                )
+
+                if appState.searchConfiguration.isAgentModeEnabled {
+                    SettingsRowDivider()
+
+                    SettingsCardBody {
+                        SettingsFieldGroup(label: "Sidecar URL") {
+                            TextField("http://127.0.0.1:8765", text: appState.searchConfigurationBinding(for: \.sidecarBaseURL))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+
+                    SettingsRowDivider()
+
+                    SettingsRow(
+                        title: "Sidecar status",
+                        subtitle: sidecarStatus
+                    ) {
+                        SettingsChangeButton(isReindexing ? "Re-indexing…" : "Re-index") {
+                            Task {
+                                await reindexBookmarks()
+                            }
+                        }
+                        .disabled(isReindexing || !canReindex)
+                    }
+                }
+            }
+
+            if appState.searchConfiguration.isAgentModeEnabled {
+                SettingsFootnote("Start the Python sidecar with `cue-search serve`, then use `/search your question` in the composer. Bookmarks are read from your mark export folder and re-indexed automatically after each /mark.")
+            }
+        }
+        .task(id: agentModeTaskID) {
+            await refreshSidecarStatus()
+        }
+    }
+
+    private var agentModeTaskID: String {
+        "\(appState.searchConfiguration.isAgentModeEnabled)-\(appState.searchConfiguration.sidecarBaseURL)-\(appState.markExportConfiguration.exportFolderPath)"
+    }
+
+    private var canReindex: Bool {
+        appState.searchConfiguration.validationError(
+            markConfiguration: appState.markExportConfiguration,
+            disabledMessage: ""
+        ) == nil
+    }
+
+    @MainActor
+    private func refreshSidecarStatus() async {
+        guard appState.searchConfiguration.isAgentModeEnabled,
+              let baseURL = appState.searchConfiguration.sidecarBaseURLValue else {
+            sidecarStatus = "Agent mode is off."
+            return
+        }
+
+        guard !isReindexing else {
+            return
+        }
+
+        sidecarStatus = "Checking cue-search…"
+        let client = SearchSidecarClient()
+
+        do {
+            let health = try await client.health(baseURL: baseURL)
+            sidecarStatus = "Connected · \(health.chunkCount) chunks indexed"
+        } catch {
+            sidecarStatus = "Not reachable — run `cue-search serve`"
+        }
+    }
+
+    @MainActor
+    private func reindexBookmarks() async {
+        guard canReindex,
+              let baseURL = appState.searchConfiguration.sidecarBaseURLValue,
+              let corpusURL = appState.markExportConfiguration.exportFolderURL else {
+            sidecarStatus = "Configure your mark export folder in Settings → Commands."
+            return
+        }
+
+        isReindexing = true
+        sidecarStatus = "Re-indexing bookmarks…"
+        defer { isReindexing = false }
+
+        let client = SearchSidecarClient()
+
+        do {
+            let response = try await client.syncIndex(
+                baseURL: baseURL,
+                corpusRoot: corpusURL.path
+            )
+            sidecarStatus = "Connected · \(response.chunksIndexed) chunks indexed"
+        } catch {
+            sidecarStatus = "Re-index failed — \(error.localizedDescription)"
         }
     }
 }

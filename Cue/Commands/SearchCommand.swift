@@ -1,11 +1,11 @@
 import Foundation
 
-enum MarkCommand {
-    static let keywords = ["//", "/mark"]
+enum SearchCommand {
+    static let keywords = ["/search"]
 
     struct Parsed: Equatable {
         let matchedKeyword: String
-        let userHint: String
+        let query: String
     }
 
     static func parse(from draft: String) -> Parsed? {
@@ -15,25 +15,9 @@ enum MarkCommand {
             return nil
         }
 
-        let hint = String(trimmed.dropFirst(keyword.count))
+        let query = String(trimmed.dropFirst(keyword.count))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return Parsed(matchedKeyword: keyword, userHint: hint)
-    }
-
-    static func hasMarkableContent(
-        browserPageContexts: [BrowserPageContext],
-        contextualMessages: [ConversationMessageDTO],
-        conversationMessages: [ConversationMessageDTO],
-        screenshotCount: Int,
-        selectedTextContextCount: Int
-    ) -> Bool {
-        MarkExportModeResolver.resolve(
-            browserPageContexts: browserPageContexts,
-            contextualMessages: contextualMessages,
-            conversationMessages: conversationMessages,
-            screenshotCount: screenshotCount,
-            selectedTextContextCount: selectedTextContextCount
-        ) != nil
+        return Parsed(matchedKeyword: keyword, query: query)
     }
 
     static func leadingKeywordRange(in text: String) -> Range<String.Index>? {

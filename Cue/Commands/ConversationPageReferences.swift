@@ -7,6 +7,11 @@ enum ConversationPageReferences {
         let browserName: String
     }
 
+    struct PageCapture: Equatable {
+        let extractedText: String
+        let capturedAt: Date?
+    }
+
     static func oldestPageReference(
         browserPageContexts: [BrowserPageContext],
         contextualMessages: [ConversationMessageDTO],
@@ -105,6 +110,29 @@ enum ConversationPageReferences {
         )
     }
 
+    static func primaryPageCapture(
+        primaryPage: PageReference,
+        browserPageContexts: [BrowserPageContext],
+        contextualMessages: [ConversationMessageDTO],
+        conversationMessages: [ConversationMessageDTO]
+    ) -> PageCapture? {
+        if let page = browserPageContexts.last(where: { $0.url == primaryPage.url }) {
+            return PageCapture(extractedText: page.extractedText, capturedAt: page.createdAt)
+        }
+
+        for message in conversationMessages where message.role == .user {
+            if let page = message.attachedBrowserPages.last(where: { $0.url == primaryPage.url }) {
+                return PageCapture(extractedText: page.extractedText, capturedAt: nil)
+            }
+        }
+
+        if let extractedText = extractedText(for: primaryPage, contextualMessages: contextualMessages) {
+            return PageCapture(extractedText: extractedText, capturedAt: nil)
+        }
+
+        return nil
+    }
+
     static func primaryPageHasExtractedText(
         primaryPage: PageReference,
         contextualMessages: [ConversationMessageDTO]
@@ -138,6 +166,28 @@ enum ConversationPageReferences {
             Do not append a separate ## References section for other URLs.
             """
         )
+    }
+
+    private static func extractedText(
+        for primaryPage: PageReference,
+        contextualMessages: [ConversationMessageDTO]
+    ) -> String? {
+        contextualMessages.compactMap { message -> String? in
+            guard message.role == .system,
+                  message.text.hasPrefix("Web page context from "),
+                  message.text.contains(primaryPage.url) else {
+                return nil
+            }
+
+            let sections = message.text.components(separatedBy: "\n\n")
+            guard sections.count > 1 else {
+                return nil
+            }
+
+            let text = sections.dropFirst().joined(separator: "\n\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }.first
     }
 
     private static func referenceFromContextMessage(_ message: ConversationMessageDTO) -> PageReference? {

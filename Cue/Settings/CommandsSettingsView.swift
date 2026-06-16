@@ -79,19 +79,22 @@ private struct SaveExportSettingsSection: View {
 
 private struct MarkExportSettingsSection: View {
     @Environment(AppModel.self) private var appState
-    @State private var systemPromptDraft = MarkExportPrompts.defaultBase
-    @State private var didLoadPromptDraft = false
-    @State private var promptResetGeneration = 0
-    @State private var persistPromptTask: Task<Void, Never>?
+    @State private var pagePromptDraft = MarkExportPrompts.defaultBase
+    @State private var conversationPromptDraft = MarkExportPrompts.conversationBase
+    @State private var didLoadPromptDrafts = false
+    @State private var pagePromptResetGeneration = 0
+    @State private var conversationPromptResetGeneration = 0
+    @State private var persistPagePromptTask: Task<Void, Never>?
+    @State private var persistConversationPromptTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: "Mark page")
+            SettingsSectionHeader(title: "Mark")
 
             SettingsCard {
                 SettingsToggleRow(
                     title: "Mark with /mark",
-                    subtitle: "Type /mark or // to bookmark the oldest page in the session with your angle.",
+                    subtitle: "Type /mark or // to save a page bookmark or conversation summary.",
                     isOn: appState.markExportConfigurationBinding(for: \.isEnabled)
                 )
 
@@ -99,75 +102,128 @@ private struct MarkExportSettingsSection: View {
                     exportFolderSection(
                         configuration: appState.markExportConfiguration,
                         pathPattern: "Bookmarks are saved to {folder}/{yyyy-MM-dd}/{title}.md",
-                        panelMessage: "Choose the folder where Cue should write page bookmarks."
+                        panelMessage: "Choose the folder where Cue should write mark exports."
                     ) {
                         chooseExportFolder()
                     }
 
                     systemPromptSection(
-                        draft: $systemPromptDraft,
-                        resetGeneration: promptResetGeneration,
-                        isDefault: isUsingDefaultPrompt,
-                        onReset: resetPromptToPreset,
-                        onDraftChange: schedulePersistPrompt
+                        title: "Page bookmark prompt",
+                        draft: $pagePromptDraft,
+                        resetGeneration: pagePromptResetGeneration,
+                        isDefault: isUsingDefaultPagePrompt,
+                        onReset: resetPagePromptToPreset,
+                        onDraftChange: schedulePersistPagePrompt
+                    )
+
+                    systemPromptSection(
+                        title: "Conversation summary prompt",
+                        draft: $conversationPromptDraft,
+                        resetGeneration: conversationPromptResetGeneration,
+                        isDefault: isUsingDefaultConversationPrompt,
+                        onReset: resetConversationPromptToPreset,
+                        onDraftChange: schedulePersistConversationPrompt
                     )
                 }
             }
 
             if appState.markExportConfiguration.isEnabled {
-                SettingsFootnote("Requires a web page in context. Type /mark or // at the start of the composer (// becomes /mark). Bookmarks are tagged cue in frontmatter. Reset the prompt if it still asks for JSON.")
+                SettingsFootnote("Page mode bookmarks the oldest web page when the session started with one. Conversation mode summarizes chat when it started without a page. Type /mark or // at the start of the composer (// becomes /mark). Bookmarks are tagged cue in frontmatter.")
             }
         }
         .onAppear {
-            loadPromptDraftIfNeeded()
+            loadPromptDraftsIfNeeded()
         }
         .onChange(of: appState.markExportConfiguration.systemPrompt) { _, newValue in
-            if systemPromptDraft != newValue {
-                systemPromptDraft = newValue
+            if pagePromptDraft != newValue {
+                pagePromptDraft = newValue
+            }
+        }
+        .onChange(of: appState.markExportConfiguration.conversationSystemPrompt) { _, newValue in
+            if conversationPromptDraft != newValue {
+                conversationPromptDraft = newValue
             }
         }
         .onDisappear {
-            persistPromptTask?.cancel()
-            persistPromptIfNeeded(systemPromptDraft)
+            persistPagePromptTask?.cancel()
+            persistConversationPromptTask?.cancel()
+            persistPagePromptIfNeeded(pagePromptDraft)
+            persistConversationPromptIfNeeded(conversationPromptDraft)
         }
     }
 
-    private var isUsingDefaultPrompt: Bool {
-        MarkExportPrompts.isUsingDefaultPrompt(
+    private var isUsingDefaultPagePrompt: Bool {
+        MarkExportPrompts.isUsingDefaultPagePrompt(
             MarkExportConfiguration(
                 isEnabled: appState.markExportConfiguration.isEnabled,
                 exportFolderPath: appState.markExportConfiguration.exportFolderPath,
-                systemPrompt: systemPromptDraft
+                systemPrompt: pagePromptDraft,
+                conversationSystemPrompt: conversationPromptDraft
             )
         )
     }
 
-    private func loadPromptDraftIfNeeded() {
-        guard !didLoadPromptDraft else { return }
-        systemPromptDraft = appState.markExportConfiguration.systemPrompt
-        didLoadPromptDraft = true
+    private var isUsingDefaultConversationPrompt: Bool {
+        MarkExportPrompts.isUsingDefaultConversationPrompt(
+            MarkExportConfiguration(
+                isEnabled: appState.markExportConfiguration.isEnabled,
+                exportFolderPath: appState.markExportConfiguration.exportFolderPath,
+                systemPrompt: pagePromptDraft,
+                conversationSystemPrompt: conversationPromptDraft
+            )
+        )
     }
 
-    private func resetPromptToPreset() {
-        persistPromptTask?.cancel()
-        systemPromptDraft = MarkExportPrompts.defaultBase
-        promptResetGeneration += 1
+    private func loadPromptDraftsIfNeeded() {
+        guard !didLoadPromptDrafts else { return }
+        pagePromptDraft = appState.markExportConfiguration.systemPrompt
+        conversationPromptDraft = appState.markExportConfiguration.conversationSystemPrompt
+        didLoadPromptDrafts = true
+    }
+
+    private func resetPagePromptToPreset() {
+        persistPagePromptTask?.cancel()
+        pagePromptDraft = MarkExportPrompts.defaultBase
+        pagePromptResetGeneration += 1
         appState.resetMarkExportSystemPrompt()
     }
 
-    private func schedulePersistPrompt(_ value: String) {
-        persistPromptTask?.cancel()
-        persistPromptTask = Task { @MainActor in
+    private func resetConversationPromptToPreset() {
+        persistConversationPromptTask?.cancel()
+        conversationPromptDraft = MarkExportPrompts.conversationBase
+        conversationPromptResetGeneration += 1
+        appState.resetMarkExportConversationSystemPrompt()
+    }
+
+    private func schedulePersistPagePrompt(_ value: String) {
+        persistPagePromptTask?.cancel()
+        persistPagePromptTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
-            persistPromptIfNeeded(value)
+            persistPagePromptIfNeeded(value)
         }
     }
 
-    private func persistPromptIfNeeded(_ value: String) {
+    private func schedulePersistConversationPrompt(_ value: String) {
+        persistConversationPromptTask?.cancel()
+        persistConversationPromptTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            persistConversationPromptIfNeeded(value)
+        }
+    }
+
+    private func persistPagePromptIfNeeded(_ value: String) {
         var configuration = appState.markExportConfiguration
         guard configuration.systemPrompt != value else { return }
         configuration.systemPrompt = value
+        appState.updateMarkExportConfiguration(configuration)
+    }
+
+    private func persistConversationPromptIfNeeded(_ value: String) {
+        var configuration = appState.markExportConfiguration
+        guard configuration.conversationSystemPrompt != value else { return }
+        configuration.conversationSystemPrompt = value
         appState.updateMarkExportConfiguration(configuration)
     }
 
@@ -223,6 +279,7 @@ private func exportFolderSection(
 }
 
 private func systemPromptSection(
+    title: String,
     draft: Binding<String>,
     resetGeneration: Int,
     isDefault: Bool,
@@ -233,7 +290,7 @@ private func systemPromptSection(
         SettingsRowDivider()
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("System prompt")
+            Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
 

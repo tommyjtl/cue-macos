@@ -37,6 +37,7 @@ final class AppModel {
         static let obsidianExportConfiguration = "obsidian-export-configuration"
         static let saveExportConfiguration = "save-export-configuration"
         static let markExportConfiguration = "mark-export-configuration"
+        static let searchConfiguration = "search-configuration"
         static let hasCompletedOnboarding = "has-completed-onboarding"
         static let soundEffectsEnabled = AppPreferenceKeys.soundEffectsEnabledKey
         static let hideMainAppOnStart = AppPreferenceKeys.hideMainAppOnStartKey
@@ -129,6 +130,7 @@ final class AppModel {
     var conversationConfiguration: ConversationConfiguration
     var saveExportConfiguration: SaveExportConfiguration
     var markExportConfiguration: MarkExportConfiguration
+    var searchConfiguration: SearchConfiguration
 
     var obsidianExportConfiguration: SaveExportConfiguration {
         get { saveExportConfiguration }
@@ -187,6 +189,7 @@ final class AppModel {
         conversationConfiguration = Self.loadConversationConfiguration()
         saveExportConfiguration = Self.loadSaveExportConfiguration()
         markExportConfiguration = Self.loadMarkExportConfiguration()
+        searchConfiguration = Self.loadSearchConfiguration()
         contextSession = ContextSession { [weak self] snapshot in
             self?.applyContextSnapshot(snapshot)
         }
@@ -251,6 +254,16 @@ final class AppModel {
             onRemoveContextItem: { [weak self] item in
                 Task { @MainActor in
                     self?.removeContextItemFromOverlay(item)
+                }
+            },
+            onDeleteMessage: { [weak self] messageID in
+                Task { @MainActor in
+                    self?.deleteConversationMessage(messageID)
+                }
+            },
+            onRetryMarkExport: { [weak self] failureMessageID in
+                Task { @MainActor in
+                    self?.retryMarkExport(failureMessageID)
                 }
             },
             onPresentationChange: { [weak self] in
@@ -458,10 +471,13 @@ final class AppModel {
         browserPageContexts.removeAll()
         activateOverlayConversationFlow()
         setCaptureErrorMessage(nil, source: .conversation)
-        if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
-            buildStatus = "Loaded \(conversation.title)."
-        }
         syncOverlayState()
+        overlayCoordinator?.showChat(near: NSEvent.mouseLocation)
+        refreshOverlayPresentationState()
+        overlayCoordinator?.relayout()
+        if let conversation = savedConversations.first(where: { $0.id == conversationID }) {
+            buildStatus = "Loaded \(conversation.title) in the composer."
+        }
     }
 
     private func loadMostRecentConversationIntoOverlay() {
@@ -605,6 +621,7 @@ final class AppModel {
             ocrAutoDetectLanguage: ocrAutoDetectLanguage,
             saveExportConfiguration: saveExportConfiguration,
             markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
             screenshots: capturedScreenshots,
             selectedTextContexts: selectedTextContexts,
             browserPageContexts: browserPageContexts,
@@ -631,6 +648,12 @@ final class AppModel {
         updateMarkExportConfiguration(configuration)
     }
 
+    func resetMarkExportConversationSystemPrompt() {
+        var configuration = markExportConfiguration
+        configuration.conversationSystemPrompt = MarkExportPrompts.conversationBase
+        updateMarkExportConfiguration(configuration)
+    }
+
     func resetObsidianNoteSystemPrompt() {}
 
     func updateSaveExportConfiguration(_ configuration: SaveExportConfiguration) {
@@ -641,6 +664,11 @@ final class AppModel {
     func updateMarkExportConfiguration(_ configuration: MarkExportConfiguration) {
         markExportConfiguration = configuration
         saveMarkExportConfiguration(configuration)
+    }
+
+    func updateSearchConfiguration(_ configuration: SearchConfiguration) {
+        searchConfiguration = configuration
+        saveSearchConfiguration(configuration)
     }
 
     func updateObsidianExportConfiguration(_ configuration: SaveExportConfiguration) {
@@ -675,6 +703,22 @@ final class AppModel {
                 }
                 configuration[keyPath: keyPath] = newValue
                 self.updateMarkExportConfiguration(configuration)
+            }
+        )
+    }
+
+    func searchConfigurationBinding<Value>(
+        for keyPath: WritableKeyPath<SearchConfiguration, Value>
+    ) -> Binding<Value> where Value: Equatable {
+        Binding(
+            get: { self.searchConfiguration[keyPath: keyPath] },
+            set: { newValue in
+                var configuration = self.searchConfiguration
+                guard configuration[keyPath: keyPath] != newValue else {
+                    return
+                }
+                configuration[keyPath: keyPath] = newValue
+                self.updateSearchConfiguration(configuration)
             }
         )
     }
@@ -722,6 +766,43 @@ final class AppModel {
                 self?.syncOverlayState()
             }
         )
+    }
+
+    func deleteConversationMessage(_ messageID: UUID) {
+        conversationCoordinator?.deleteMessage(
+            id: messageID,
+            setError: { [weak self] message in
+                self?.setCaptureErrorMessage(message, source: .conversation)
+            },
+            syncPanel: { [weak self] in
+                self?.syncOverlayState()
+            }
+        )
+    }
+
+    func retryMarkExport(_ failureMessageID: UUID) {
+        activateOverlayConversationFlow()
+        conversationCoordinator?.retryMarkExport(
+            failureMessageID: failureMessageID,
+            configuration: conversationConfiguration,
+            ocrImagesForLocalModels: ocrImagesForLocalModels,
+            ocrAutoDetectLanguage: ocrAutoDetectLanguage,
+            markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
+            setStatus: { [weak self] status in
+                self?.buildStatus = status
+            },
+            setError: { [weak self] message in
+                self?.setCaptureErrorMessage(message, source: .conversation)
+            },
+            syncPanel: { [weak self] in
+                self?.syncOverlayState()
+            },
+            onDebugLog: { [weak self] message in
+                self?.appendDebugLog(message, source: .obsidianNote)
+            }
+        )
+        syncOverlayState()
     }
 
     /// Presents newly collected context in the overlay. Keeps chat mode when the composer is already open.
@@ -874,6 +955,26 @@ final class AppModel {
         }
 
         UserDefaults.standard.set(data, forKey: UserDefaultsKey.markExportConfiguration)
+    }
+
+    private static func loadSearchConfiguration() -> SearchConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: UserDefaultsKey.searchConfiguration) else {
+            return .defaultValue
+        }
+
+        do {
+            return try JSONDecoder().decode(SearchConfiguration.self, from: data)
+        } catch {
+            return .defaultValue
+        }
+    }
+
+    private func saveSearchConfiguration(_ configuration: SearchConfiguration) {
+        guard let data = try? JSONEncoder().encode(configuration) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: UserDefaultsKey.searchConfiguration)
     }
 
     func resetConversationConfiguration() {
