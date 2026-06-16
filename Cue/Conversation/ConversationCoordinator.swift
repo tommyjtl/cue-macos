@@ -642,7 +642,6 @@ final class ConversationCoordinator {
 
         session.messages.append(userMessage)
         persistConversationSnapshot(conversationID: conversationID, setError: setError)
-        session.isConversationInProgress = true
 
         let presetGeneratingContext: MarkExportDefaultSynthesisInstruction.PresetGeneratingContext? = switch markMode {
         case let .page(primaryPage):
@@ -656,6 +655,182 @@ final class ConversationCoordinator {
             nil
         }
 
+        beginMarkExport(
+            markCommand: markCommand,
+            userMessageID: userMessageID,
+            markMode: markMode,
+            contextualBrowserPages: contextualBrowserPages,
+            contextualMessages: contextualMessages,
+            configuration: configuration,
+            ocrImagesForLocalModels: ocrImagesForLocalModels,
+            ocrAutoDetectLanguage: ocrAutoDetectLanguage,
+            markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
+            presetGeneratingContext: presetGeneratingContext,
+            setStatus: setStatus,
+            setError: setError,
+            syncPanel: syncPanel,
+            onDebugLog: onDebugLog
+        )
+    }
+
+    func retryMarkExport(
+        failureMessageID: UUID,
+        configuration: ConversationConfiguration,
+        ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
+        markExportConfiguration: MarkExportConfiguration,
+        searchConfiguration: SearchConfiguration,
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
+    ) {
+        guard !session.isConversationInProgress else {
+            return
+        }
+
+        if let validationError = markExportConfiguration.validationError {
+            setError(validationError)
+            setStatus("Mark export is not configured.")
+            return
+        }
+
+        guard let failureIndex = session.messages.firstIndex(where: { $0.id == failureMessageID }),
+              let failureMessage = MarkExportFailureMessage.parse(from: session.messages[failureIndex].text) else {
+            setError("This mark export can’t be retried.")
+            return
+        }
+
+        guard let userMessage = session.messages.first(where: { $0.id == failureMessage.userMessageID && $0.role == .user }),
+              let markCommand = MarkCommand.parse(from: userMessage.text) else {
+            setError("Could not find the original /mark message to retry.")
+            return
+        }
+
+        let attachedContexts = Self.attachedContexts(from: userMessage)
+        let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
+        let conversationMessages = session.messages[..<failureIndex].map(\.self)
+        let provisionalContextualMessages = ConversationContextMessages.build(
+            sessionMessages: conversationMessages,
+            selectedTextContexts: attachedContexts.selectedTextContexts,
+            browserPageContexts: attachedContexts.browserPageContexts,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage
+        )
+
+        guard let markMode = MarkExportModeResolver.resolve(
+            browserPageContexts: attachedContexts.browserPageContexts,
+            contextualMessages: provisionalContextualMessages,
+            conversationMessages: conversationMessages,
+            screenshotCount: attachedContexts.screenshotCount,
+            selectedTextContextCount: attachedContexts.selectedTextContexts.count
+        ) else {
+            setError("Send a message, attach context, or attach a web page before using /mark or //.")
+            setStatus("Nothing to mark yet.")
+            return
+        }
+
+        let includeWebPageContext = markMode.includesWebPageContext
+        let contextualBrowserPages = includeWebPageContext ? attachedContexts.browserPageContexts : []
+        let contextualMessages = ConversationContextMessages.build(
+            sessionMessages: conversationMessages,
+            selectedTextContexts: attachedContexts.selectedTextContexts,
+            browserPageContexts: attachedContexts.browserPageContexts,
+            screenshotDeliveryMode: usesImageOCR ? .ocrExtractedText : .rawImage,
+            includeWebPageContext: includeWebPageContext
+        )
+
+        session.messages.remove(at: failureIndex)
+        persistConversationSnapshot(
+            conversationID: ensureActiveConversationID(),
+            setError: setError
+        )
+
+        let presetGeneratingContext: MarkExportDefaultSynthesisInstruction.PresetGeneratingContext? = switch markMode {
+        case let .page(primaryPage):
+            MarkExportDefaultSynthesisInstruction.resolve(
+                userHint: markCommand.userHint,
+                hasConversation: MarkExportService.hasSubstantiveConversation(conversationMessages),
+                primaryPage: primaryPage,
+                contextualMessages: contextualMessages
+            )?.presetGeneratingContext
+        case .conversation:
+            nil
+        }
+
+        beginMarkExport(
+            markCommand: markCommand,
+            userMessageID: userMessage.id,
+            markMode: markMode,
+            contextualBrowserPages: contextualBrowserPages,
+            contextualMessages: contextualMessages,
+            configuration: configuration,
+            ocrImagesForLocalModels: ocrImagesForLocalModels,
+            ocrAutoDetectLanguage: ocrAutoDetectLanguage,
+            markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
+            presetGeneratingContext: presetGeneratingContext,
+            setStatus: setStatus,
+            setError: setError,
+            syncPanel: syncPanel,
+            onDebugLog: onDebugLog
+        )
+    }
+
+    private struct AttachedMarkContexts {
+        let browserPageContexts: [BrowserPageContext]
+        let selectedTextContexts: [AttachedTextContext]
+        let screenshotCount: Int
+    }
+
+    private static func attachedContexts(from userMessage: ConversationMessageDTO) -> AttachedMarkContexts {
+        let browserPageContexts = userMessage.attachedBrowserPages.map { reference in
+            BrowserPageContext(
+                id: UUID(),
+                createdAt: Date(),
+                url: reference.url,
+                pageTitle: reference.pageTitle,
+                extractedText: reference.extractedText,
+                browserName: reference.browserName
+            )
+        }
+        let selectedTextContexts = userMessage.attachedSelectedTexts.map { reference in
+            AttachedTextContext(
+                createdAt: Date(),
+                text: reference.text,
+                appName: reference.appName,
+                bundleIdentifier: nil
+            )
+        }
+
+        return AttachedMarkContexts(
+            browserPageContexts: browserPageContexts,
+            selectedTextContexts: selectedTextContexts,
+            screenshotCount: userMessage.imageAttachments.count
+        )
+    }
+
+    private func beginMarkExport(
+        markCommand: MarkCommand.Parsed,
+        userMessageID: UUID,
+        markMode: MarkExportMode,
+        contextualBrowserPages: [BrowserPageContext],
+        contextualMessages: [ConversationMessageDTO],
+        configuration: ConversationConfiguration,
+        ocrImagesForLocalModels: Bool,
+        ocrAutoDetectLanguage: Bool,
+        markExportConfiguration: MarkExportConfiguration,
+        searchConfiguration: SearchConfiguration,
+        presetGeneratingContext: MarkExportDefaultSynthesisInstruction.PresetGeneratingContext?,
+        setStatus: @escaping @MainActor (String) -> Void,
+        setError: @escaping @MainActor (String?) -> Void,
+        syncPanel: @escaping @MainActor () -> Void,
+        onDebugLog: ((String) -> Void)? = nil
+    ) {
+        let usesImageOCR = configuration.provider == .ollama && ocrImagesForLocalModels
+        let conversationID = ensureActiveConversationID()
+
+        session.isConversationInProgress = true
         session.inFlightActivity = .generatingBookmark(preset: presetGeneratingContext, mode: markMode)
         publishSession()
         if presetGeneratingContext != nil {
@@ -719,7 +894,15 @@ final class ConversationCoordinator {
                 setStatus("Mark export cancelled.")
             } catch {
                 let message = error.localizedDescription
-                session.messages.append(ConversationMessageDTO(role: .system, text: message))
+                let failureText: String = if case MarkExportServiceError.invalidModelResponse = error {
+                    MarkExportFailureMessage.messageText(
+                        userMessageID: userMessageID,
+                        errorDescription: message
+                    )
+                } else {
+                    message
+                }
+                session.messages.append(ConversationMessageDTO(role: .system, text: failureText))
                 persistConversationSnapshot(conversationID: conversationID, setError: setError)
                 publishSession()
                 setError(message)

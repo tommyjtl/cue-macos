@@ -135,7 +135,7 @@ struct CommandExportTests {
     }
 
     @Test func markGeneratedContentParserRejectsMarkdownOnlyResponse() {
-        #expect(throws: MarkExportServiceError.invalidModelResponse) {
+        #expect(throws: MarkGeneratedContentParseFailure.invalidJSON("Response is not a JSON object.")) {
             try MarkGeneratedContentParser.parse(
                 """
                 Fallow — codebase intelligence for TypeScript
@@ -185,7 +185,7 @@ struct CommandExportTests {
     }
 
     @Test func markGeneratedContentParserRejectsEmptyBody() {
-        #expect(throws: MarkExportServiceError.invalidModelResponse) {
+        #expect(throws: MarkGeneratedContentParseFailure.emptyBody) {
             try MarkGeneratedContentParser.parse(
                 "{\"title\":\"MotherDuck\",\"body\":\"## Highlights\"}"
             )
@@ -949,5 +949,23 @@ struct CommandExportTests {
 
         #expect(whyMarkerCount == 1)
         #expect(jsonMarkerCount == 1)
+    }
+
+    @Test func markExportFailureMessageRoundTrip() {
+        let userMessageID = UUID()
+        let text = MarkExportFailureMessage.messageText(
+            userMessageID: userMessageID,
+            errorDescription: "Cue could not parse the generated bookmark content."
+        )
+
+        let parsed = MarkExportFailureMessage.parse(from: text)
+        #expect(parsed?.userMessageID == userMessageID)
+        #expect(parsed?.errorDescription == "Cue could not parse the generated bookmark content.")
+    }
+
+    @Test func markGeneratedContentParserReportsJSONDecodeFailure() {
+        #expect(throws: MarkGeneratedContentParseFailure.self) {
+            try MarkGeneratedContentParser.parse("{\"title\":\"Test\",\"body\":\"## Highlights\\n\\n- Item\"\"}")
+        }
     }
 }

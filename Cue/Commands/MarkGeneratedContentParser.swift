@@ -12,12 +12,10 @@ enum MarkGeneratedContentParser {
         )
 
         guard !normalized.isEmpty else {
-            throw MarkExportServiceError.invalidModelResponse
+            throw MarkGeneratedContentParseFailure.emptyResponse
         }
 
-        guard let parsed = parseJSONPayload(from: normalized) else {
-            throw MarkExportServiceError.invalidModelResponse
-        }
+        let parsed = try parseJSONPayload(from: normalized)
 
         let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = parsed.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,21 +24,21 @@ enum MarkGeneratedContentParser {
             : title
 
         guard !resolvedTitle.isEmpty else {
-            throw MarkExportServiceError.invalidModelResponse
+            throw MarkGeneratedContentParseFailure.emptyTitle
         }
 
         guard MarkExportBodySanitizer.hasSubstantiveContent(body) else {
-            throw MarkExportServiceError.invalidModelResponse
+            throw MarkGeneratedContentParseFailure.emptyBody
         }
 
         return Parsed(title: resolvedTitle, body: body)
     }
 
-    private static func parseJSONPayload(from text: String) -> Parsed? {
+    private static func parseJSONPayload(from text: String) throws -> Parsed {
         let jsonText = extractJSONPayload(from: text)
         guard jsonText.hasPrefix("{"),
               let data = jsonText.data(using: .utf8) else {
-            return nil
+            throw MarkGeneratedContentParseFailure.invalidJSON("Response is not a JSON object.")
         }
 
         struct GeneratedNoteContent: Decodable {
@@ -48,11 +46,12 @@ enum MarkGeneratedContentParser {
             let body: String
         }
 
-        guard let decoded = try? JSONDecoder().decode(GeneratedNoteContent.self, from: data) else {
-            return nil
+        do {
+            let decoded = try JSONDecoder().decode(GeneratedNoteContent.self, from: data)
+            return Parsed(title: decoded.title, body: decoded.body)
+        } catch {
+            throw MarkGeneratedContentParseFailure.invalidJSON(error.localizedDescription)
         }
-
-        return Parsed(title: decoded.title, body: decoded.body)
     }
 
     private static func extractJSONPayload(from text: String) -> String {

@@ -261,6 +261,11 @@ final class AppModel {
                     self?.deleteConversationMessage(messageID)
                 }
             },
+            onRetryMarkExport: { [weak self] failureMessageID in
+                Task { @MainActor in
+                    self?.retryMarkExport(failureMessageID)
+                }
+            },
             onPresentationChange: { [weak self] in
                 self?.refreshOverlayPresentationState()
             }
@@ -773,6 +778,31 @@ final class AppModel {
                 self?.syncOverlayState()
             }
         )
+    }
+
+    func retryMarkExport(_ failureMessageID: UUID) {
+        activateOverlayConversationFlow()
+        conversationCoordinator?.retryMarkExport(
+            failureMessageID: failureMessageID,
+            configuration: conversationConfiguration,
+            ocrImagesForLocalModels: ocrImagesForLocalModels,
+            ocrAutoDetectLanguage: ocrAutoDetectLanguage,
+            markExportConfiguration: markExportConfiguration,
+            searchConfiguration: searchConfiguration,
+            setStatus: { [weak self] status in
+                self?.buildStatus = status
+            },
+            setError: { [weak self] message in
+                self?.setCaptureErrorMessage(message, source: .conversation)
+            },
+            syncPanel: { [weak self] in
+                self?.syncOverlayState()
+            },
+            onDebugLog: { [weak self] message in
+                self?.appendDebugLog(message, source: .obsidianNote)
+            }
+        )
+        syncOverlayState()
     }
 
     /// Presents newly collected context in the overlay. Keeps chat mode when the composer is already open.

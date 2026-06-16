@@ -31,6 +31,7 @@ final class OverlayCoordinator {
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
         onDeleteMessage: @escaping (UUID) -> Void,
+        onRetryMarkExport: @escaping (UUID) -> Void,
         onPresentationChange: @escaping () -> Void
     ) {
         windowController = ContextStackWindowController(
@@ -43,6 +44,7 @@ final class OverlayCoordinator {
             onSetWebSearchEnabled: onSetWebSearchEnabled,
             onRemoveContextItem: onRemoveContextItem,
             onDeleteMessage: onDeleteMessage,
+            onRetryMarkExport: onRetryMarkExport,
             onPresentationChange: onPresentationChange
         )
     }

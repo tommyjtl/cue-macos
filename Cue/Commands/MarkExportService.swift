@@ -167,9 +167,10 @@ struct MarkExportService {
             responseText: response.message.text,
             onDebugLog: onDebugLog
         )
-        let generatedContent = try MarkGeneratedContentParser.parse(
-            response.message.text,
-            fallbackTitle: primaryPage.title
+        let generatedContent = try parseGeneratedBookmarkContent(
+            responseText: response.message.text,
+            fallbackTitle: primaryPage.title,
+            onDebugLog: onDebugLog
         )
 
         let host = URL(string: primaryPage.url)?.host ?? ""
@@ -273,9 +274,10 @@ struct MarkExportService {
             responseText: response.message.text,
             onDebugLog: onDebugLog
         )
-        let generatedContent = try MarkGeneratedContentParser.parse(
-            response.message.text,
-            fallbackTitle: fallbackTitle
+        let generatedContent = try parseGeneratedBookmarkContent(
+            responseText: response.message.text,
+            fallbackTitle: fallbackTitle,
+            onDebugLog: onDebugLog
         )
 
         let result = try noteWriter.write(
@@ -463,6 +465,24 @@ struct MarkExportService {
 
         Distill substantive conversation into a short lead paragraph before ## Highlights. Always include a non-empty ## Highlights section. Combine the hint and conversation for ## Why I saved this and ## My notes as appropriate.
         """
+    }
+
+    private func parseGeneratedBookmarkContent(
+        responseText: String,
+        fallbackTitle: String,
+        onDebugLog: ((String) -> Void)?
+    ) throws -> MarkGeneratedContentParser.Parsed {
+        do {
+            return try MarkGeneratedContentParser.parse(responseText, fallbackTitle: fallbackTitle)
+        } catch let failure as MarkGeneratedContentParseFailure {
+            onDebugLog?(
+                [
+                    "=== Mark Export Parse Failure ===",
+                    failure.description
+                ].joined(separator: "\n")
+            )
+            throw MarkExportServiceError.invalidModelResponse
+        }
     }
 
     private func logWriteResult(

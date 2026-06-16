@@ -22,6 +22,7 @@ final class ContextStackWindowController: NSWindowController {
     private let onSetWebSearchEnabled: (Bool) -> Void
     private let onRemoveContextItem: (ContextPreviewItem) -> Void
     private let onDeleteMessage: (UUID) -> Void
+    private let onRetryMarkExport: (UUID) -> Void
     private let onPresentationChange: () -> Void
     private let panel: ContextStackPanel
     private let hostingView: NSHostingView<ContextStackView>
@@ -52,6 +53,7 @@ final class ContextStackWindowController: NSWindowController {
         onSetWebSearchEnabled: @escaping (Bool) -> Void,
         onRemoveContextItem: @escaping (ContextPreviewItem) -> Void,
         onDeleteMessage: @escaping (UUID) -> Void,
+        onRetryMarkExport: @escaping (UUID) -> Void,
         onPresentationChange: @escaping () -> Void
     ) {
         let normalizedDismissChatShortcut = (dismissChatShortcut ?? DismissChatShortcut.defaultValue).normalized
@@ -65,10 +67,11 @@ final class ContextStackWindowController: NSWindowController {
         self.onSetWebSearchEnabled = onSetWebSearchEnabled
         self.onRemoveContextItem = onRemoveContextItem
         self.onDeleteMessage = onDeleteMessage
+        self.onRetryMarkExport = onRetryMarkExport
         self.onPresentationChange = onPresentationChange
         let viewModel = ContextPanelViewModel()
         self.viewModel = viewModel
-        let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in }, onDeleteMessage: { _ in }, onEscape: {})
+        let initialView = ContextStackView(model: viewModel, onClear: onClear, onCloseChat: {}, onSend: {}, onCancelSend: {}, onLoadMostRecent: {}, onSetWebSearchEnabled: { _ in }, onRemoveContextItem: { _ in }, onDeleteMessage: { _ in }, onRetryMarkExport: { _ in }, onEscape: {})
         hostingView = NSHostingView(rootView: initialView)
 
         panel = ContextStackPanel(
@@ -517,6 +520,9 @@ final class ContextStackWindowController: NSWindowController {
             },
             onDeleteMessage: { [weak self] messageID in
                 self?.onDeleteMessage(messageID)
+            },
+            onRetryMarkExport: { [weak self] failureMessageID in
+                self?.onRetryMarkExport(failureMessageID)
             },
             onEscape: {}
         )

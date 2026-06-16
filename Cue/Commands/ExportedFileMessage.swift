@@ -24,6 +24,39 @@ enum ConversationJSONExportMessage {
     }
 }
 
+enum MarkExportFailureMessage {
+    nonisolated static let prefix = "cue-mark-export-failure:"
+
+    static func messageText(userMessageID: UUID, errorDescription: String) -> String {
+        "\(prefix)\(userMessageID.uuidString)\n\(errorDescription)"
+    }
+
+    static func parse(from messageText: String) -> (userMessageID: UUID, errorDescription: String)? {
+        let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(prefix) else {
+            return nil
+        }
+
+        let remainder = trimmed.dropFirst(prefix.count)
+        guard let newlineIndex = remainder.firstIndex(of: "\n") else {
+            return nil
+        }
+
+        let idString = String(remainder[..<newlineIndex])
+        guard let userMessageID = UUID(uuidString: idString) else {
+            return nil
+        }
+
+        let errorDescription = String(remainder[remainder.index(after: newlineIndex)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !errorDescription.isEmpty else {
+            return nil
+        }
+
+        return (userMessageID, errorDescription)
+    }
+}
+
 enum ObsidianSavedNoteMessage {
     nonisolated static let confirmationPrefix = "Saved to Obsidian:"
 

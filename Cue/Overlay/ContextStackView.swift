@@ -63,6 +63,7 @@ struct ContextStackView: View {
     let onSetWebSearchEnabled: (Bool) -> Void
     let onRemoveContextItem: (ContextPreviewItem) -> Void
     let onDeleteMessage: (UUID) -> Void
+    let onRetryMarkExport: (UUID) -> Void
     let onEscape: () -> Void
 
     @State private var scrollDebounceTask: Task<Void, Never>?
@@ -278,7 +279,9 @@ struct ContextStackView: View {
                                         && !model.inFlightActivity.showsStatusBox
                                         && message.id == model.messages.last?.id,
                                     canDelete: !model.isSending,
-                                    onDelete: { onDeleteMessage(message.id) }
+                                    canRetryMarkExport: !model.isSending,
+                                    onDelete: { onDeleteMessage(message.id) },
+                                    onRetryMarkExport: { onRetryMarkExport(message.id) }
                                 )
                             }
 
@@ -439,7 +442,9 @@ private struct ConversationMessageBubble: View {
     let assistantDisplayName: String
     let rendersStreamingText: Bool
     let canDelete: Bool
+    let canRetryMarkExport: Bool
     let onDelete: () -> Void
+    let onRetryMarkExport: () -> Void
 
     @State private var isHovered = false
 
@@ -486,6 +491,16 @@ private struct ConversationMessageBubble: View {
 
                 OpenObsidianNoteButton(fileURL: savedNoteFileURL)
                     .padding(.top, 4)
+            } else if let markExportFailure = MarkExportFailureMessage.parse(from: message.text) {
+                Text(markExportFailure.errorDescription)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if canRetryMarkExport {
+                    RetryMarkExportButton(action: onRetryMarkExport)
+                        .padding(.top, 4)
+                }
             } else if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 messageBody
                     .font(.body)
